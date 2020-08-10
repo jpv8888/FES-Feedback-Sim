@@ -6,6 +6,7 @@ Created on Tue Aug  4 06:21:39 2020
 """
 
 import math
+import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 from matplotlib.collections import LineCollection
 import numpy as np
@@ -78,7 +79,7 @@ class Skeleton:
         self.bones = bones
         self.joints = joints
         self.init_endpoints(endpoints_0)
-        self.calc_joint_angles()
+        
             
     def init_endpoints(self, endpoints_0):
         for endpoints_bone in endpoints_0:
@@ -86,6 +87,7 @@ class Skeleton:
                 if bone.name == endpoints_bone:
                     bone.endpoint1.coords = endpoints_0[endpoints_bone][0]
                     bone.endpoint2.coords = endpoints_0[endpoints_bone][1]
+        self.calc_joint_angles()
                     
     def recalc(self):
         for bone in self.bones:
@@ -105,10 +107,26 @@ class Skeleton:
             
         line_segments = LineCollection(segs)
         
+        
         fig, ax = plt.subplots()
+        
+        # circles look like ovals if you don't include this
+        ax.axis("equal")
+        
         ax.set_xlim(-0.5, 0.5)
         ax.set_ylim(-0.5, 0.5)
         
+        # plot circles representing each joint
+        for joint in self.joints:
+            circle = patches.Circle((joint.location[0], joint.location[1]), 
+                                    0.01, fill=True)
+            ax.add_patch(circle)
+            
+        # plot hand
+        circle = patches.Circle((self.bones[-1].endpoint2.coords[0], self.bones[-1].endpoint2.coords[1]), 
+                                0.015, fill=True)
+        ax.add_patch(circle)
+            
         ax.add_collection(line_segments)
         plt.show()
         
@@ -141,9 +159,9 @@ class Skeleton:
             
             prev_bone_endpoint = bone.endpoint2.coords
             
-    # calculate and set joint angles using bone endpoints
-    # cosine of angle between two vectors is defined as their dot product 
-    # divided by the product of the magnitudes of the two vectors
+    # calculate and set joint angles using bone endpoints, also updates joint
+    # locations, cosine of angle between two vectors is defined as their dot 
+    # product divided by the product of the magnitudes of the two vectors
     def calc_joint_angles(self):
         for joint in self.joints:
             for bone in self.bones:
@@ -167,12 +185,22 @@ class Skeleton:
             
             joint.angle = math.acos(cos_alpha)
     
-    # calculate and set bone endpoints using joint angles       
+    # calculate and set bone endpoints using joint angles, also updates joint
+    # locations due to calling of realign_bones()       
     def calc_bone_endpoints(self):
-        current_bone_endpoint1 = [0, 0]
-        for bone in self.bones:
+        
+        current_bone_endpoint1 = self.bones[0].endpoint1.coords
+        
+        # iterate down the arm (outward from body per convention)
+        iterbones = iter(self.bones)
+        
+        # skip the first bone as its always fixed
+        next(iterbones)
+        
+        for bone in iterbones:
             prev_bone_endpoint1 = current_bone_endpoint1
             current_bone_endpoint1 = bone.endpoint1.coords
+            
             if bone.endpoint2.mutable == True:
                 for joint in self.joints:
                     if joint.bone2 == bone.name:
@@ -199,7 +227,16 @@ class Skeleton:
                             
                          bone.endpoint2.coords = [x + y for x, y in zip(vec2, joint_loc)]
                          self.realign_bones()
-                         
+    
+    # set user or script defined joint angles and update all necessary bone 
+    # and joint parameters                      
+    def write_joint_angles(self, joint_angles):
+        
+        for i, joint_angle in enumerate(joint_angles):
+            self.joints[i].angle = joint_angle
+        
+        self.calc_bone_endpoints()
+        
     def print_data(self):
          for bone in self.bones:
              print(bone.name)

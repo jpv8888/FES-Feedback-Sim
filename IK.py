@@ -29,9 +29,7 @@ args = (skeleton, wrist_endpoint)
 
 def initial_pose(joint_angles, *args):
     
-    for i, joint_angle in enumerate(joint_angles):
-        skeleton.joints[i].angle = joint_angle
-    skeleton.calc_bone_endpoints()
+    skeleton.write_joint_angles(joint_angles)
     model_endpoint = skeleton.bones[-1].endpoint2.coords
     endpoint_error = math.sqrt(sum((px - qx) ** 2.0 for px, qx in zip(model_endpoint, wrist_endpoint)))
     default_ang_dev = 0
