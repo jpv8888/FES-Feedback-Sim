@@ -1,24 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Created on Tue Aug  4 06:21:39 2020
-
-@author: 17049
+Classes and function comprising all skeletal elements of the model
+@author: Jack Vincent
 """
 
 import math
+from matplotlib.animation import FuncAnimation
+from matplotlib.collections import LineCollection, PatchCollection
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
-from matplotlib.collections import LineCollection
-import numpy as np
 
-
+# only really a class so that bone endpoints can be checked for mutability 
 class Endpoint:
     
     def __init__(self, coords, mutable):
         self.coords = coords
         self.mutable = mutable
         
-
+# first of two chief components making up a skeleton
 class Bone:
     
     def __init__(self, name, length, mass, mutable1, mutable2):
@@ -28,9 +27,14 @@ class Bone:
         self.length = length
         self.mass = mass
         
-        # calculate moment of inertia about center of mass and joint
+        # calculate moment of inertia about center of mass and joint, 
+        # specifically joint immediately preceding bone, as bone's moment of 
+        # inertia contribution to that joint will be constant regardless of 
+        # its exact orientation
         self.I_CoM = (self.mass*(self.length**2))/12
         self.I_joint = self.I_CoM + self.mass*(self.length/2)**2
+        
+        # mutability of endpoints
         self.mutable1 = mutable1
         self.mutable2 = mutable2
         
@@ -38,16 +42,16 @@ class Bone:
         self.endpoint1 = Endpoint([0, 0], mutable1)
         self.endpoint2 = Endpoint([0, 0], mutable2)
     
-    
+    # center of mass: bone endpoints need to be set before can be calculated
     CoM = [0, 0]
     
-    # calculate center of mass of the bone using the locations of its endpoints
+    # calculate the bone's center of mass using the locations of its endpoints
     def calc_CoM(self):
         x = self.endpoint1.coords[0] + (self.endpoint2.coords[0] - self.endpoint1.coords[0])/2
         y = self.endpoint1.coords[1] + (self.endpoint2.coords[1] - self.endpoint1.coords[1])/2
         self.CoM = [x, y]
         
-        
+# second of two chief components making up a skeleton      
 class Joint:
     
     def __init__(self, name, bone1, bone2, min_ang, max_ang, default, rotation):
@@ -57,79 +61,157 @@ class Joint:
         self.bone1 = bone1
         self.bone2 = bone2
         
+        # minimum and maximum allowed joint angles, units = degrees
         self.min_ang = min_ang
         self.max_ang = max_ang
         
-        # joint's default angle
+        # joint's default angle, units = degrees
         self.default = default
         
-        # angle defined as angle from bone1 to bone2 starting at 0, units = rads
+        # angle is defined as angle from bone1 to bone2 starting at 0; 
+        # units = rads, why? min_ang, max_ang, and default are all prescribed
+        # by the user in advance, angle is really the only value used in model
+        # operations
         self.angle = default
         
-        # whether or not bone2 rotates clockwise (cw) or counterclockwise (ccw)
-        # relative to bone1
+        # whether or not bone2 rotates clockwise (cw) or counterclockwise 
+        # (ccw) relative to bone1
         self.rotation = rotation
     
+    # bone endpoints need to be set before can be calculated
     location = [0, 0]
         
-
+# comprised of bones and joints
 class Skeleton:
     
     def __init__(self, bones, joints, endpoints_0):
+        
+        # initial endpoints must be provided to set the skeleton at start
         self.bones = bones
         self.joints = joints
         self.init_endpoints(endpoints_0)
         
-            
+    # sets bone endpoint locations base on initial input endpoint locations, 
+    # runs on object instantiation     
     def init_endpoints(self, endpoints_0):
         for endpoints_bone in endpoints_0:
             for bone in self.bones:
                 if bone.name == endpoints_bone:
                     bone.endpoint1.coords = endpoints_0[endpoints_bone][0]
                     bone.endpoint2.coords = endpoints_0[endpoints_bone][1]
-        self.calc_joint_angles()
                     
-    def recalc(self):
-        for bone in self.bones:
-            bone.calc_CoM()
-            bone.calc_I()
-    
-    def visualize(self):
-        segs = []
+        # adjust joint angles accordingly
+        self.calc_joint_angles()
         
-        # anchor for first bone
-        anchor_x = self.bones[0].endpoint1.coords[0]
-        anchor_y = self.bones[0].endpoint1.coords[1]
-        segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
+    # calculate and set joint angles using bone endpoints, also updates joint
+    # locations, cosine of angle between two vectors is defined as their dot 
+    # product divided by the product of the magnitudes of the two vectors,
+    # runs on object instantiation 
+    def calc_joint_angles(self):
         
-        for bone in self.bones:
-            segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
-            
-        line_segments = LineCollection(segs)
-        
-        
-        fig, ax = plt.subplots()
-        
-        # circles look like ovals if you don't include this
-        ax.axis("equal")
-        
-        ax.set_xlim(-0.5, 0.5)
-        ax.set_ylim(-0.5, 0.5)
-        
-        # plot circles representing each joint
+        # iterate through each joint
         for joint in self.joints:
-            circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                    0.01, fill=True)
-            ax.add_patch(circle)
             
-        # plot hand
-        circle = patches.Circle((self.bones[-1].endpoint2.coords[0], self.bones[-1].endpoint2.coords[1]), 
-                                0.015, fill=True)
-        ax.add_patch(circle)
+            # identify the bones associated with this joint
+            for bone in self.bones:
+                if joint.bone1 == bone.name:
+                    joint_loc = bone.endpoint2.coords
+                    joint_endpoint1 = bone.endpoint1.coords
+                elif joint.bone2 == bone.name:
+                    joint_endpoint2 = bone.endpoint2.coords
             
-        ax.add_collection(line_segments)
-        plt.show()
+            # update the joint location
+            joint.location = joint_loc
+            
+            # calculate vectors describing bones enclosing joint
+            vec1 = [x - y for x, y in zip(joint_endpoint1, joint_loc)]
+            vec2 = [x - y for x, y in zip(joint_endpoint2, joint_loc)]
+            
+            # calculate those vectors' magnitudes
+            vec1_mag = (vec1[0]**2 + vec1[1]**2)**0.5
+            vec2_mag = (vec2[0]**2 + vec2[1]**2)**0.5
+            
+            # calculate dot product between those vectors
+            dot_prod = vec1[0]*vec2[0] + vec1[1]*vec2[1]
+            
+            # calculate cosine of joint angle
+            cos_alpha = dot_prod/(vec1_mag*vec2_mag)
+            
+            # calculate and write joint angle
+            joint.angle = math.acos(cos_alpha)
+            
+    """
+    this doesn't take into account joint rotation direction, but it absolutely
+    should, the values it's producing may not be correct
+    """
+    
+    # calculate and set bone endpoints using joint angles, also updates joint
+    # locations due to calling of realign_bones()       
+    def calc_bone_endpoints(self):
         
+        # start with the first bone
+        current_bone_endpoint1 = self.bones[0].endpoint1.coords
+        
+        # iterate down the arm (outward from body per convention)
+        iterbones = iter(self.bones)
+        
+        # skip the first bone as its always fixed
+        next(iterbones)
+        
+        for bone in iterbones:
+            prev_bone_endpoint1 = current_bone_endpoint1
+            current_bone_endpoint1 = bone.endpoint1.coords
+            
+            # check if the current bone's second endpoint can be moved
+            if bone.endpoint2.mutable == True:
+                
+                # identify joint associated with the current movable bone
+                for joint in self.joints:
+                    if joint.bone2 == bone.name:
+                        
+                         # redefining some stuff relative to the joint of 
+                         # interest
+                         joint_loc = bone.endpoint1.coords
+                         joint_endpoint1 = prev_bone_endpoint1
+                         
+                         # vector representing previous bone relative to joint
+                         vec1 = [x - y for x, y in zip(joint_endpoint1, joint_loc)]
+                         
+                         # magnitude of that vector
+                         vec1_mag = (vec1[0]**2 + vec1[1]**2)**0.5
+                         
+                         # that vector converted to a unit vector
+                         vec1_unit = []
+                         for coord in vec1:
+                             vec1_unit.append(coord/vec1_mag)
+                             
+                        # counterclockwise or clockwise (depending on rotation 
+                        # direction of joint) rotation matrix applied to that 
+                        # unit vector, output is now unit vector 
+                        # representation of joint's second bone
+                         if joint.rotation == 'ccw':
+                             x = vec1_unit[0]*math.cos(joint.angle) - vec1_unit[1]*math.sin(joint.angle)
+                             y = vec1_unit[0]*math.sin(joint.angle) + vec1_unit[1]*math.cos(joint.angle)
+                         elif joint.rotation == 'cw':
+                             x = vec1_unit[0]*math.cos(joint.angle) + vec1_unit[1]*math.sin(joint.angle)
+                             y = vec1_unit[0]*-math.sin(joint.angle) + vec1_unit[1]*math.cos(joint.angle)
+                         vec2_unit = [x, y]
+                         
+                         # scale that unit vector by second bone's length
+                         vec2 = []
+                         for coord in vec2_unit:
+                             vec2.append(coord * bone.length)
+                             
+                         # adjust second bone's endpoints according to joint 
+                         # location and vector that now represents it rotated 
+                         # correctly about the joint
+                         bone.endpoint2.coords = [x + y for x, y in zip(vec2, joint_loc)]
+                         
+                         # must now realign bones, as any bones that might 
+                         # have been connected to the bone we just adjusted 
+                         # are now in the wrong place
+                         self.realign_bones()
+                         
     # fix bones so that all endpoints line up, must be called after adjusting 
     # the location of any bone
     def realign_bones(self):
@@ -139,8 +221,12 @@ class Skeleton:
         
         # skip the first bone as its always fixed
         next(iterbones)
+        
+        # end-endpoint of the previous bone, i.e. endpoint 2
         prev_bone_endpoint = self.bones[0].endpoint2.coords
         
+        # check other, non-fixed bones to see if they are lining up with their 
+        # previous bones
         for bone in iterbones:
             if bone.endpoint1.coords != prev_bone_endpoint:
                 
@@ -157,76 +243,187 @@ class Skeleton:
                     if joint.bone2 == bone.name:
                         joint.location = bone.endpoint1.coords
             
+            # this bone is now the previous bone
             prev_bone_endpoint = bone.endpoint2.coords
-            
-    # calculate and set joint angles using bone endpoints, also updates joint
-    # locations, cosine of angle between two vectors is defined as their dot 
-    # product divided by the product of the magnitudes of the two vectors
-    def calc_joint_angles(self):
-        for joint in self.joints:
-            for bone in self.bones:
-                if joint.bone1 == bone.name:
-                    joint_loc = bone.endpoint2.coords
-                    joint_endpoint1 = bone.endpoint1.coords
-                elif joint.bone2 == bone.name:
-                    joint_endpoint2 = bone.endpoint2.coords
-            
-            joint.location = joint_loc
-            
-            vec1 = [x - y for x, y in zip(joint_endpoint1, joint_loc)]
-            vec2 = [x - y for x, y in zip(joint_endpoint2, joint_loc)]
-            
-            vec1_mag = (vec1[0]**2 + vec1[1]**2)**0.5
-            vec2_mag = (vec2[0]**2 + vec2[1]**2)**0.5
-            
-            dot_prod = vec1[0]*vec2[0] + vec1[1]*vec2[1]
-            
-            cos_alpha = dot_prod/(vec1_mag*vec2_mag)
-            
-            joint.angle = math.acos(cos_alpha)
     
-    # calculate and set bone endpoints using joint angles, also updates joint
-    # locations due to calling of realign_bones()       
-    def calc_bone_endpoints(self):
+    # generate still image of skeleton, primarily for debugging purposes                     
+    def visualize(self):
         
-        current_bone_endpoint1 = self.bones[0].endpoint1.coords
+        # will hold all bones to be plotted as line segments
+        segs = []
         
-        # iterate down the arm (outward from body per convention)
-        iterbones = iter(self.bones)
+        # anchor for first bone
+        anchor_x = self.bones[0].endpoint1.coords[0]
+        anchor_y = self.bones[0].endpoint1.coords[1]
+        segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
         
-        # skip the first bone as its always fixed
-        next(iterbones)
-        
-        for bone in iterbones:
-            prev_bone_endpoint1 = current_bone_endpoint1
-            current_bone_endpoint1 = bone.endpoint1.coords
+        # add all bones to the collection of segments to be plotted
+        for bone in self.bones:
+            segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
             
-            if bone.endpoint2.mutable == True:
-                for joint in self.joints:
-                    if joint.bone2 == bone.name:
-                        
-                         joint_loc = bone.endpoint1.coords
-                         joint_endpoint1 = prev_bone_endpoint1
-                         
-                         vec1 = [x - y for x, y in zip(joint_endpoint1, joint_loc)]
-                         vec1_mag = (vec1[0]**2 + vec1[1]**2)**0.5
-                         vec1_unit = []
-                         for coord in vec1:
-                             vec1_unit.append(coord/vec1_mag)
-                         if joint.rotation == 'ccw':
-                             x = vec1_unit[0]*math.cos(joint.angle) - vec1_unit[1]*math.sin(joint.angle)
-                             y = vec1_unit[0]*math.sin(joint.angle) + vec1_unit[1]*math.cos(joint.angle)
-                         elif joint.rotation == 'cw':
-                             x = vec1_unit[0]*math.cos(joint.angle) + vec1_unit[1]*math.sin(joint.angle)
-                             y = vec1_unit[0]*-math.sin(joint.angle) + vec1_unit[1]*math.cos(joint.angle)
-                         vec2_unit = [x, y]
-                         
-                         vec2 = []
-                         for coord in vec2_unit:
-                             vec2.append(coord * bone.length)
-                            
-                         bone.endpoint2.coords = [x + y for x, y in zip(vec2, joint_loc)]
-                         self.realign_bones()
+        line_segments = LineCollection(segs)
+        
+        # will hold all joints and hand to be plotted as circles
+        circles = []
+        
+        # add circles representing each joint
+        for joint in self.joints:
+            circle = patches.Circle((joint.location[0], joint.location[1]), 
+                                    0.01, fill=True)
+            circles.append(circle)
+            
+        # add circle representing hand
+        circle = patches.Circle((self.bones[-1].endpoint2.coords[0], 
+                                 self.bones[-1].endpoint2.coords[1]), 0.015, 
+                                fill=True)
+        circles.append(circle)
+        
+        circles_collection = PatchCollection(circles)
+            
+        # initialize figure
+        fig, ax = plt.subplots()
+        
+        # circles look like ovals if you don't include this 
+        ax.axis('square')
+        
+        # formatting
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_title('Current Skeleton')
+        ax.set_xlim(-0.75, 0.25)
+        ax.set_ylim(-0.75, 0.5)
+        
+        """
+        limits should probably be set according to the alpha shape generated 
+        in endpoints.py, and that information and probably also this function 
+        and animate will move to model.py once we have musculature 
+        """
+        
+        # add all visualization elements
+        ax.add_collection(line_segments)
+        ax.add_collection(circles_collection)
+        
+    # animate data described by joint angles over time; first create frame 1 
+    # and its associated line and circle collections, then use an animation 
+    # function with FuncAnimation to create all subsequent frames
+    def animate(self, joint_angles, f_s):
+        
+        # sampling frequency
+        interval = 1/f_s
+        
+        # initialize figure
+        fig, ax = plt.subplots()
+        
+        # circles look like ovals if you don't include this 
+        ax.axis('square')
+        
+        # formatting
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_title('Animated Skeleton')
+        ax.set_xlim(-0.75, 0.25)
+        ax.set_ylim(-0.75, 0.5)
+        
+        """
+        same comments as for visualize() 
+        """
+        
+        # set skeleton for first frame
+        self.write_joint_angles(joint_angles[0])
+        
+        # will hold all bones to be plotted as line segments
+        segs = []
+        
+        # anchor for first bone
+        anchor_x = self.bones[0].endpoint1.coords[0]
+        anchor_y = self.bones[0].endpoint1.coords[1]
+        segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
+        
+        # add all bones to the collection of segments to be plotted
+        for bone in self.bones:
+            segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
+            
+        line_segments = LineCollection(segs)
+        
+        # will hold all joints and hand to be plotted as circles
+        circles = []
+        
+        # add circles representing each joint
+        for joint in self.joints:
+            circle = patches.Circle((joint.location[0], joint.location[1]), 
+                                    0.01, fill=True)
+            circles.append(circle)
+            
+        # add circle representing hand
+        circle = patches.Circle((self.bones[-1].endpoint2.coords[0], 
+                                 self.bones[-1].endpoint2.coords[1]), 0.015, 
+                                fill=True)
+        circles.append(circle)
+        
+        circles_collection = PatchCollection(circles)
+        
+        # add visualization elements for first frame
+        ax.add_collection(line_segments)
+        ax.add_collection(circles_collection)
+        
+        # other stuff that needs to be passed to our animation function
+        fargs = self, joint_angles
+        
+        # function that will be called for each frame of animation
+        def func(frame, *fargs):
+            
+            # set skeleton
+            self.write_joint_angles(joint_angles[frame])
+            
+            # will hold all bones to be plotted as line segments
+            segs = []
+        
+            # anchor for first bone
+            anchor_x = self.bones[0].endpoint1.coords[0]
+            anchor_y = self.bones[0].endpoint1.coords[1]
+            segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
+            
+            # add all bones to the collection of segments to be plotted
+            for bone in self.bones:
+                segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
+                
+           
+            # will hold all joints and hand to be plotted as circles
+            circles = []
+            
+            # add circles representing each joint
+            for joint in self.joints:
+                circle = patches.Circle((joint.location[0], joint.location[1]), 
+                                        0.01, fill=True)
+                circles.append(circle)
+                
+            # add circle representing hand
+            circle = patches.Circle((self.bones[-1].endpoint2.coords[0], 
+                                     self.bones[-1].endpoint2.coords[1]), 
+                                    0.015, fill=True)
+            circles.append(circle)
+            
+            # update and plot line and circle collections
+            line_segments.set_paths(segs)
+            circles_collection.set_paths(circles)
+            
+        # animate each frame using animation function
+        anim = FuncAnimation(fig, func, frames=len(joint_angles), 
+                             interval=interval)
+        
+        return anim
+    
+    # can be used to obtain all current joint angles of the skeleton 
+    def return_joint_angles(self):
+        
+        joint_angles = []
+        
+        for joint in self.joints:
+            joint_angles.append(joint.angle)
+            
+        joint_angles = tuple(joint_angles)
+        
+        return joint_angles
     
     # set user or script defined joint angles and update all necessary bone 
     # and joint parameters                      
@@ -237,15 +434,13 @@ class Skeleton:
         
         self.calc_bone_endpoints()
         
-    def print_data(self):
-         for bone in self.bones:
-             print(bone.name)
-             print(bone.endpoint1.coords)
-             print(bone.endpoint2.coords)
-         for joint in self.joints:
-             print(joint.name)
-             print(joint.location)
-             print(joint.angle)
-            
-            
-            
+    # update CoM and moments of inertia for each bone      
+    def recalc(self):
+    
+        for bone in self.bones:
+            bone.calc_CoM()
+            bone.calc_I()
+
+    """
+    no use at the moment
+    """
