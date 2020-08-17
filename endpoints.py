@@ -5,86 +5,21 @@ through time
 @author: Jack Vincent
 """
 
-import itertools
-import pickle
-from math import dist, radians
+from math import dist
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import logistic
 
-import alphashape
 from descartes import PolygonPatch
 from shapely.geometry import Point, LineString
 from sklearn.linear_model import LinearRegression
 
 import model
 
-# generate fresh skeleton
-skeleton = model.init()
-
-# %% explore endpoint solution space 
-
-# degrees, precision with which to comb through possible endpoint locations
-angle_step = 1
-
-# will eventually hold all possible joint angle combinations
-angle_space = []
-
-# outputs list of lists, where each list corresponds to all possible values of
-# a joint angle
-for joint in skeleton.joints:
-    angle_space.append(np.arange(radians(joint.min_ang), 
-                                 radians(joint.max_ang) + radians(angle_step), 
-                                 radians(angle_step)))
-    
-# converts angle_space list to an iterable of every possible combination of 
-# joint angles
-angle_space = itertools.product(*angle_space)
-   
-# records every hand endpoint associated with the previously generated angles
-possible_endpoints = []
-for joint_angles in angle_space:
-    skeleton.write_joint_angles(joint_angles)
-    possible_endpoints.append(skeleton.bones[-1].endpoint2.coords)
-    
-# %% generate alpha shape associated with endpoint solution space
-  
-# optimal alpha can be calculated automatically, but doing this results in a 
-# very long run time; user-selected alpha should be big enough to tightly wrap
-# around the solution space but low enough to not exclude points
-alpha = 7
-
-# generate and plot solution space alpha shape
-alpha_shape = alphashape.alphashape(possible_endpoints, alpha)
-
-# axis limits
-left = min(endpoint[0] for endpoint in possible_endpoints)
-right = max(endpoint[0] for endpoint in possible_endpoints)
-top = max(endpoint[1] for endpoint in possible_endpoints)
-bottom = min(endpoint[1] for endpoint in possible_endpoints)
-
-# figure formatting
-fig, ax = plt.subplots()
-ax.axis('square')
-ax.set_xlim(left - 0.1, right + 0.1)
-ax.set_ylim(bottom - 0.1, top + 0.1)
-ax.set_xlabel('x')
-ax.set_ylabel('y')
-ax.set_title('Possible Hand Endpoint Locations')
-
-# add the possible hand endpoints
-ax.scatter(*zip(*possible_endpoints), 0.1)
-
-# add a circle to show where the shoulder is
-circle = patches.Circle((skeleton.joints[0].location[0], skeleton.joints[0].location[1]), 
-                        0.015, fill=True)
-ax.add_patch(circle)
-plt.annotate('shoulder', 
-             (skeleton.joints[0].location[0], skeleton.joints[0].location[1]))
-
-# add the alpha shape
-ax.add_patch(PolygonPatch(alpha_shape, alpha=0.2))  
+# load in model and experiment
+current_model = model.load('upper_arm_0')
+current_experiment = model.load('8-17-20')
 
 # %% generate random endpoints contained in the solution space
 
@@ -96,8 +31,8 @@ ax.add_patch(PolygonPatch(alpha_shape, alpha=0.2))
 # lines between reaching targets
 
 # space we will use to randomly try points
-xlims = ax.get_xlim()
-ylims = ax.get_ylim()
+xlims = current_model.skeleton.x_lim
+ylims = current_model.skeleton.y_lim
 
 # desired total number of endpoints to generate
 num_endpoints = 5
@@ -114,7 +49,7 @@ while len(endpoints) < 1:
     point = Point(x, y)
     
     # as long as it's in the alpha shape, we're good to go
-    if alpha_shape.contains(point):
+    if current_model.skeleton.alpha_shape.contains(point):
         endpoints.append((x, y))
         previous_endpoint = (x, y)
         
@@ -127,35 +62,35 @@ while len(endpoints) < num_endpoints:
     point = Point(x, y)
     
     # if it's contained in the alpha shape, move to the next step
-    if alpha_shape.contains(point):
+    if current_model.skeleton.alpha_shape.contains(point):
         current_endpoint = (x, y)
         
         # generate a line connecting previous endpoint to this potential 
         # endpoint, if it doesn't intersect the boundary of the alpha shape 
         # (i.e. is fully contained within the alpha shape), we're good to go
         movement_line = LineString([previous_endpoint, current_endpoint])
-        if not movement_line.intersects(alpha_shape.boundary):
+        if not movement_line.intersects(current_model.skeleton.alpha_shape.boundary):
             endpoints.append(current_endpoint)
             previous_endpoint = current_endpoint
             
 # figure formatting
 fig, ax = plt.subplots()
 ax.axis('square')
-ax.set_xlim(left - 0.1, right + 0.1)
-ax.set_ylim(bottom - 0.1, top + 0.1)
+ax.set_xlim(current_model.skeleton.x_lim[0], current_model.skeleton.x_lim[1])
+ax.set_ylim(current_model.skeleton.y_lim[0], current_model.skeleton.y_lim[1])
 ax.set_xlabel('x')
 ax.set_ylabel('y')
 ax.set_title('Random Hand Endpoint Reaching Targets')
 
 # add a circle to show where the shoulder is
-circle = patches.Circle((skeleton.joints[0].location[0], skeleton.joints[0].location[1]), 
+circle = patches.Circle((current_model.skeleton.joints[0].location[0], current_model.skeleton.joints[0].location[1]), 
                         0.015, fill=True)
 ax.add_patch(circle)
 plt.annotate('shoulder', 
-             (skeleton.joints[0].location[0], skeleton.joints[0].location[1]))
+             (current_model.skeleton.joints[0].location[0], current_model.skeleton.joints[0].location[1]))
 
 # add the alpha shape
-ax.add_patch(PolygonPatch(alpha_shape, alpha=0.2)) 
+ax.add_patch(PolygonPatch(current_model.skeleton.alpha_shape, alpha=0.2)) 
 
 # add a circle to highlight the location of the first and last endpoint
 circle = patches.Circle((endpoints[0][0], endpoints[0][1]), 0.01, fill=True)
@@ -301,15 +236,8 @@ while t[-1] < last_end_time + rest_time:
     endpoints_final.append(endpoints_final[-1])
 
 # write generated time and hand endpoint position data
-with open("t.txt", "wb") as fp:
-    pickle.dump(t, fp)
-with open("endpoints.txt", "wb") as fp:
-    pickle.dump(endpoints_final, fp)
-    
-"""
-ultimately, a more sophisticated data structure is going to be needed to keep 
-track of all the data recorded over the course of an experiment (e.g. joint 
-angles, velocities, muscle activations, etc.), including this initial data;  
-until then, we're just writing it out of this script and reading it into 
-whatever script it might be needed in with pickle
-"""
+current_experiment.t = t
+current_experiment.endpoints = endpoints_final
+
+current_model.dump()
+current_experiment.dump()

@@ -4,9 +4,16 @@ Classes and functions for generating a completed model and coordinating
 actions that require crosstalk between skeletal and muscular information
 @author: Jack Vincent
 """
+
+import pickle
+
 from bones import Bone, Joint, Skeleton
 
-def init():
+# writes and dumps a fresh model in the working directory
+def init_model(name):
+    
+    # name for this particular model instance
+    name = name
     
     # for bone lengths:
     # Pan N. Length of long bones and their proportion to body height in 
@@ -47,4 +54,65 @@ def init():
     skeleton = Skeleton([scapula, humerus, radioulna], [shoulder, elbow], 
                         endpoints_0)
     
-    return skeleton
+    # dump model
+    with open(name, "wb") as fp:
+        pickle.dump(Model(name, skeleton), fp)
+        
+# writes and dumps a fresh experiment in the working directory
+def init_experiment(name):
+    
+    # dump experiment
+    with open(name, "wb") as fp:
+        pickle.dump(Experiment(name), fp)
+        
+# load in a model or experiment from the working directory
+def load(name):
+    
+    # read in model or experiment
+    with open(name, "rb") as fp:   
+        return(pickle.load(fp))
+
+# model object composed of skeleton and musculature 
+class Model:
+    
+    def __init__(self, name, skeleton):
+        
+        self.name = name
+        self.skeleton = skeleton
+    
+    # store self in working directory using pickle
+    def dump(self):
+        with open(self.name, "wb") as fp:
+            pickle.dump(self, fp)
+       
+    # necessary to be able to pickle this object
+    def __getstate__(self): return self.__dict__
+    def __setstate__(self, d): self.__dict__.update(d)
+    
+# experiment object, keeps track of data through various processing scripts
+class Experiment:
+    
+    def __init__(self, name):
+        
+        self.name = name
+        self.t = []
+        self.endpoints = []
+        self.joints = []
+        
+    # store self in working directory using pickle
+    def dump(self):
+        with open(self.name, "wb") as fp:
+            pickle.dump(self, fp)
+        
+    # necessary to be able to pickle this object
+    def __getstate__(self): return self.__dict__
+    def __setstate__(self, d): self.__dict__.update(d)
+    
+# tracking data related to a single joint through an experiment
+class JointData:
+    
+    def __init__(self, name):
+    
+        self.name = name
+        self.angle = []
+

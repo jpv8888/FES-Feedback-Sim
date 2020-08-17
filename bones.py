@@ -4,11 +4,17 @@ Classes and function comprising all skeletal elements of the model
 @author: Jack Vincent
 """
 
+import alphashape
+from descartes import PolygonPatch
+import itertools
 import math
+from math import radians
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection, PatchCollection
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+import numpy as np
+
 
 # only really a class so that bone endpoints can be checked for mutability 
 class Endpoint:
@@ -90,6 +96,7 @@ class Skeleton:
         self.bones = bones
         self.joints = joints
         self.init_endpoints(endpoints_0)
+        self.calc_alpha_shape()
         
     # sets bone endpoint locations base on initial input endpoint locations, 
     # runs on object instantiation     
@@ -102,7 +109,79 @@ class Skeleton:
                     
         # adjust joint angles accordingly
         self.calc_joint_angles()
+    
+    # runs on object instantiation, explores endpoint solution space and fits
+    # alpha shape to boundaries
+    def calc_alpha_shape(self):
+
+        # degrees, precision with which to comb through possible endpoint locations
+        angle_step = 1
         
+        # will eventually hold all possible joint angle combinations
+        angle_space = []
+        
+        # outputs list of lists, where each list corresponds to all possible values of
+        # a joint angle
+        for joint in self.joints:
+            angle_space.append(np.arange(radians(joint.min_ang), 
+                                         radians(joint.max_ang) + radians(angle_step), 
+                                         radians(angle_step)))
+            
+        # converts angle_space list to an iterable of every possible combination of 
+        # joint angles
+        angle_space = itertools.product(*angle_space)
+           
+        # records every hand endpoint associated with the previously generated angles
+        possible_endpoints = []
+        for joint_angles in angle_space:
+            self.write_joint_angles(joint_angles)
+            possible_endpoints.append(self.bones[-1].endpoint2.coords)
+            
+        self.possible_endpoints = possible_endpoints
+        
+        # optimal alpha can be calculated automatically, but doing this results in a 
+        # very long run time; user-selected alpha should be big enough to tightly wrap
+        # around the solution space but low enough to not exclude points
+        alpha = 7
+        
+        # generate and plot solution space alpha shape
+        self.alpha_shape = alphashape.alphashape(possible_endpoints, alpha)
+        
+        # axis limits
+        left = min(endpoint[0] for endpoint in possible_endpoints)
+        right = max(endpoint[0] for endpoint in possible_endpoints)
+        top = max(endpoint[1] for endpoint in possible_endpoints)
+        bottom = min(endpoint[1] for endpoint in possible_endpoints)
+        
+        # stored for all future visualizations
+        self.x_lim = [left - 0.1, right + 0.1]
+        self.y_lim = [bottom - 0.1, top + 0.1]
+        
+    # view hand endpoint solution space and associated alpha shape
+    def plot_solution_space(self):
+        
+        # figure formatting
+        fig, ax = plt.subplots()
+        ax.axis('square')
+        ax.set_xlim(self.x_lim[0], self.x_lim[1])
+        ax.set_ylim(self.y_lim[0], self.y_lim[1])
+        ax.set_xlabel('x')
+        ax.set_ylabel('y')
+        ax.set_title('Possible Hand Endpoint Locations')
+        
+        # add the possible hand endpoints
+        ax.scatter(*zip(*self.possible_endpoints), 0.1)
+        
+        # add a circle to show where the shoulder is
+        circle = patches.Circle((self.joints[0].location[0], self.joints[0].location[1]), 
+                                0.015, fill=True)
+        ax.add_patch(circle)
+        plt.annotate('shoulder', 
+                     (self.joints[0].location[0], self.joints[0].location[1]))
+        
+        # add the alpha shape
+        ax.add_patch(PolygonPatch(self.alpha_shape, alpha=0.2)) 
+    
     # calculate and set joint angles using bone endpoints, also updates joint
     # locations, cosine of angle between two vectors is defined as their dot 
     # product divided by the product of the magnitudes of the two vectors,
@@ -290,13 +369,12 @@ class Skeleton:
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_title('Current Skeleton')
-        ax.set_xlim(-0.75, 0.25)
-        ax.set_ylim(-0.75, 0.5)
+        ax.set_xlim(self.x_lim[0], self.x_lim[1])
+        ax.set_ylim(self.y_lim[0], self.y_lim[1])
         
         """
-        limits should probably be set according to the alpha shape generated 
-        in endpoints.py, and that information and probably also this function 
-        and animate will move to model.py once we have musculature 
+        probably this function and animate will move to model.py once we have 
+        musculature 
         """
         
         # add all visualization elements
@@ -321,8 +399,8 @@ class Skeleton:
         ax.set_xlabel('x')
         ax.set_ylabel('y')
         ax.set_title('Animated Skeleton')
-        ax.set_xlim(-0.75, 0.25)
-        ax.set_ylim(-0.75, 0.5)
+        ax.set_xlim(self.x_lim[0], self.x_lim[1])
+        ax.set_ylim(self.y_lim[0], self.y_lim[1])
         
         """
         same comments as for visualize() 
