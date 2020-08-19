@@ -10,7 +10,6 @@ from scipy.optimize import Bounds, minimize
 
 import model
 
-
 # %% data preparation prior to generating poses
 
 # load in model and experiment
@@ -21,7 +20,6 @@ endpoints = current_experiment.endpoints
 # this list will hold the final joint angles calculated to produce the desired 
 # hand endpoint locations
 IK_joint_angles = []
-
 
 # bounds on joint angles (dictated by anatomy), used by both initial_pose() 
 # and more_pose() 
@@ -76,7 +74,7 @@ for i, joint in enumerate(current_model.skeleton.joints):
 IK_joint_angles.append(current_model.skeleton.return_joint_angles())
     
 # %% calculate all other poses
-
+    
 # function to be minimized 
 def more_pose(joint_angles, *args):
     
@@ -110,7 +108,7 @@ for i, endpoint in enumerate(iter_endpoints):
     # initial guess is current value of all joint angles
     x0 = []
     for joint in current_model.skeleton.joints:
-        x0.append(math.radians(joint.angle))
+        x0.append(joint.angle)
 
     # current endpoint being solved for
     hand_endpoint = endpoint
@@ -139,14 +137,18 @@ for i, endpoint in enumerate(iter_endpoints):
     # record solution
     IK_joint_angles.append(current_model.skeleton.return_joint_angles())
     
-# examine the finished results
-anim = current_model.skeleton.animate(IK_joint_angles, 100)
-
+# write IK derived joint angles to experiment object
+joint_datas = []
 for joint in current_model.skeleton.joints:
-    current_experiment.joints.append(model.JointData(joint.name))
+    joint_datas.append(model.JointData(joint.name))
+    
+current_experiment.joints = joint_datas
 
 for i, joint_data in enumerate(current_experiment.joints):
     current_experiment.joints[i].angle = [x[i] for x in IK_joint_angles]
+    
+# examine the finished results
+anim = current_model.animate(current_experiment)
 
 # write finished results
 current_model.dump()

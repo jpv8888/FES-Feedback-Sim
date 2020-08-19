@@ -8,9 +8,7 @@ import alphashape
 from descartes import PolygonPatch
 import itertools
 import math
-from math import radians
-from matplotlib.animation import FuncAnimation
-from matplotlib.collections import LineCollection, PatchCollection
+from math import dist, radians
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
@@ -83,9 +81,13 @@ class Joint:
         # whether or not bone2 rotates clockwise (cw) or counterclockwise 
         # (ccw) relative to bone1
         self.rotation = rotation
+        
     
     # bone endpoints need to be set before can be calculated
     location = [0, 0]
+    
+    # moment of inertia for rotating this joint
+    I = 0
         
 # comprised of bones and joints
 class Skeleton:
@@ -156,6 +158,24 @@ class Skeleton:
         # stored for all future visualizations
         self.x_lim = [left - 0.1, right + 0.1]
         self.y_lim = [bottom - 0.1, top + 0.1]
+       
+    # update moment of inertia at each joint
+    def calc_I(self):
+        
+        add_subsequent_bones = False
+        for joint in self.joints:
+            for bone in self.bones:
+                bone.calc_CoM()
+                if bone.name == joint.bone2:
+                    I = bone.I_joint
+                    add_subsequent_bones = True
+                elif add_subsequent_bones == True:
+                    bone_dist = dist(bone.CoM, joint.location)
+                    I_bone = bone.I_CoM + bone.mass*(bone_dist)**2
+                    I += I_bone
+            joint.I = I
+            add_subsequent_bones = False
+                
         
     # view hand endpoint solution space and associated alpha shape
     def plot_solution_space(self):
@@ -325,172 +345,6 @@ class Skeleton:
             # this bone is now the previous bone
             prev_bone_endpoint = bone.endpoint2.coords
     
-    # generate still image of skeleton, primarily for debugging purposes                     
-    def visualize(self):
-        
-        # will hold all bones to be plotted as line segments
-        segs = []
-        
-        # anchor for first bone
-        anchor_x = self.bones[0].endpoint1.coords[0]
-        anchor_y = self.bones[0].endpoint1.coords[1]
-        segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
-        
-        # add all bones to the collection of segments to be plotted
-        for bone in self.bones:
-            segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
-            
-        line_segments = LineCollection(segs)
-        
-        # will hold all joints and hand to be plotted as circles
-        circles = []
-        
-        # add circles representing each joint
-        for joint in self.joints:
-            circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                    0.01, fill=True)
-            circles.append(circle)
-            
-        # add circle representing hand
-        circle = patches.Circle((self.bones[-1].endpoint2.coords[0], 
-                                 self.bones[-1].endpoint2.coords[1]), 0.015, 
-                                fill=True)
-        circles.append(circle)
-        
-        circles_collection = PatchCollection(circles)
-            
-        # initialize figure
-        fig, ax = plt.subplots()
-        
-        # circles look like ovals if you don't include this 
-        ax.axis('square')
-        
-        # formatting
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_title('Current Skeleton')
-        ax.set_xlim(self.x_lim[0], self.x_lim[1])
-        ax.set_ylim(self.y_lim[0], self.y_lim[1])
-        
-        """
-        probably this function and animate will move to model.py once we have 
-        musculature 
-        """
-        
-        # add all visualization elements
-        ax.add_collection(line_segments)
-        ax.add_collection(circles_collection)
-        
-    # animate data described by joint angles over time; first create frame 1 
-    # and its associated line and circle collections, then use an animation 
-    # function with FuncAnimation to create all subsequent frames
-    def animate(self, joint_angles, f_s):
-        
-        # sampling frequency
-        interval = 1/f_s
-        
-        # initialize figure
-        fig, ax = plt.subplots()
-        
-        # circles look like ovals if you don't include this 
-        ax.axis('square')
-        
-        # formatting
-        ax.set_xlabel('x')
-        ax.set_ylabel('y')
-        ax.set_title('Animated Skeleton')
-        ax.set_xlim(self.x_lim[0], self.x_lim[1])
-        ax.set_ylim(self.y_lim[0], self.y_lim[1])
-        
-        """
-        same comments as for visualize() 
-        """
-        
-        # set skeleton for first frame
-        self.write_joint_angles(joint_angles[0])
-        
-        # will hold all bones to be plotted as line segments
-        segs = []
-        
-        # anchor for first bone
-        anchor_x = self.bones[0].endpoint1.coords[0]
-        anchor_y = self.bones[0].endpoint1.coords[1]
-        segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
-        
-        # add all bones to the collection of segments to be plotted
-        for bone in self.bones:
-            segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
-            
-        line_segments = LineCollection(segs)
-        
-        # will hold all joints and hand to be plotted as circles
-        circles = []
-        
-        # add circles representing each joint
-        for joint in self.joints:
-            circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                    0.01, fill=True)
-            circles.append(circle)
-            
-        # add circle representing hand
-        circle = patches.Circle((self.bones[-1].endpoint2.coords[0], 
-                                 self.bones[-1].endpoint2.coords[1]), 0.015, 
-                                fill=True)
-        circles.append(circle)
-        
-        circles_collection = PatchCollection(circles)
-        
-        # add visualization elements for first frame
-        ax.add_collection(line_segments)
-        ax.add_collection(circles_collection)
-        
-        # other stuff that needs to be passed to our animation function
-        fargs = self, joint_angles
-        
-        # function that will be called for each frame of animation
-        def func(frame, *fargs):
-            
-            # set skeleton
-            self.write_joint_angles(joint_angles[frame])
-            
-            # will hold all bones to be plotted as line segments
-            segs = []
-        
-            # anchor for first bone
-            anchor_x = self.bones[0].endpoint1.coords[0]
-            anchor_y = self.bones[0].endpoint1.coords[1]
-            segs.append(((anchor_x, anchor_y + 0.05), (anchor_x, anchor_y - 0.05)))
-            
-            # add all bones to the collection of segments to be plotted
-            for bone in self.bones:
-                segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
-                
-           
-            # will hold all joints and hand to be plotted as circles
-            circles = []
-            
-            # add circles representing each joint
-            for joint in self.joints:
-                circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                        0.01, fill=True)
-                circles.append(circle)
-                
-            # add circle representing hand
-            circle = patches.Circle((self.bones[-1].endpoint2.coords[0], 
-                                     self.bones[-1].endpoint2.coords[1]), 
-                                    0.015, fill=True)
-            circles.append(circle)
-            
-            # update and plot line and circle collections
-            line_segments.set_paths(segs)
-            circles_collection.set_paths(circles)
-            
-        # animate each frame using animation function
-        anim = FuncAnimation(fig, func, frames=len(joint_angles), 
-                             interval=interval)
-        
-        return anim
-    
     # can be used to obtain all current joint angles of the skeleton 
     def return_joint_angles(self):
         
@@ -517,7 +371,7 @@ class Skeleton:
     
         for bone in self.bones:
             bone.calc_CoM()
-            bone.calc_I()
+           
 
     """
     no use at the moment

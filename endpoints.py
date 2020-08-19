@@ -78,24 +78,32 @@ fig, ax = plt.subplots()
 ax.axis('square')
 ax.set_xlim(current_model.skeleton.x_lim[0], current_model.skeleton.x_lim[1])
 ax.set_ylim(current_model.skeleton.y_lim[0], current_model.skeleton.y_lim[1])
-ax.set_xlabel('x')
-ax.set_ylabel('y')
-ax.set_title('Random Hand Endpoint Reaching Targets')
+ax.set_xlabel('x position')
+ax.set_ylabel('y position')
+ax.set_title('Random Hand Endpoint Reaching Targets \n (In sagittal section view)')
 
 # add a circle to show where the shoulder is
 circle = patches.Circle((current_model.skeleton.joints[0].location[0], current_model.skeleton.joints[0].location[1]), 
                         0.015, fill=True)
 ax.add_patch(circle)
-plt.annotate('shoulder', 
+plt.annotate('Shoulder Joint Axis', 
              (current_model.skeleton.joints[0].location[0], current_model.skeleton.joints[0].location[1]))
 
 # add the alpha shape
-ax.add_patch(PolygonPatch(current_model.skeleton.alpha_shape, alpha=0.2)) 
+ax.add_patch(PolygonPatch(current_model.skeleton.alpha_shape, alpha=0.2))
 
-# add a circle to highlight the location of the first and last endpoint
-circle = patches.Circle((endpoints[0][0], endpoints[0][1]), 0.01, fill=True)
+# add a green circle to highlight the location of the first endpoint and name 
+# it Starting position
+circle = patches.Circle((endpoints[0][0], endpoints[0][1]), 0.015, fill=True)
+circle.set_facecolor('lime')
+plt.annotate('Starting position',(endpoints[0][0], endpoints[0][1])) 
 ax.add_patch(circle)
-circle = patches.Circle((endpoints[-1][0], endpoints[-1][1]), 0.01, fill=True)
+
+# add a red circle to highlight the location of the last endpoint and name it 
+# End position
+circle = patches.Circle((endpoints[-1][0], endpoints[-1][1]), 0.015, fill=True)
+circle.set_facecolor('red')
+plt.annotate('End position',(endpoints[-1][0], endpoints[-1][1]))
 ax.add_patch(circle)
 
 # plot the generated endpoints with arrows, so it's clear what direction the 
@@ -104,7 +112,7 @@ i = 1
 while i < len(endpoints):
     plt.arrow(endpoints[i - 1][0], endpoints[i - 1][1], 
               endpoints[i][0] - endpoints[i - 1][0], 
-              endpoints[i][1] - endpoints[i - 1][1], head_width=0.02, 
+              endpoints[i][1] - endpoints[i - 1][1], head_width=0.03, 
               length_includes_head=True)
     i += 1
 
@@ -170,8 +178,8 @@ reach_time = 1.5
 max_rest_time = 1
 
 # sampling frequency and period
-f_s = 100
-T = 1/f_s
+f_s = current_experiment.f_s
+T = current_experiment.T
 
 # time vector for reach
 t_reach = np.arange(0, reach_time + T, T)
