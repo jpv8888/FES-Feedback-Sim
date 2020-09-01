@@ -79,10 +79,10 @@ class Joint:
         self.angle = default
         
         # whether or not bone2 rotates clockwise (cw) or counterclockwise 
-        # (ccw) relative to bone1
+        # (ccw) relative to bone1; ccw movement, velocity, torque etc. is 
+        # positive while cw is negative
         self.rotation = rotation
         
-    
     # bone endpoints need to be set before can be calculated
     location = [0, 0]
     
@@ -159,6 +159,55 @@ class Skeleton:
         self.x_lim = [left - 0.1, right + 0.1]
         self.y_lim = [bottom - 0.1, top + 0.1]
        
+    # calculate the torques currently being produced by gravity at each joint
+    def calc_gravity(self):
+        
+        # standard acceleration due to gravity
+        g = 9.8
+        
+        # update center of mass of each bone
+        for bone in self.bones:
+            bone.calc_CoM()
+        
+        gravity_torques = []
+        add_subsequent_bones = False
+        
+        for joint in self.joints:
+            current_torque = 0
+            for bone in self.bones:
+                if bone.name == joint.bone2:
+                    
+                    # position vector from bone center of mass to joint
+                    r = joint.location[0] - bone.CoM[0]
+            
+                    # direction of torque must be flipped for bones that 
+                    # rotate clockwise (against convention)
+                    if joint.rotation == 'cw':
+                        current_torque += -r*g*bone.mass
+                        
+                    else:
+                        current_torque += r*g*bone.mass
+                        
+                    add_subsequent_bones = True
+                    
+                elif add_subsequent_bones == True:
+                    
+                    # position vector from bone center of mass to joint
+                    r = joint.location[0] - bone.CoM[0]
+            
+                    # direction of torque must be flipped for bones that 
+                    # rotate clockwise (against convention)
+                    if joint.rotation == 'cw':
+                        current_torque += -r*g*bone.mass
+                        
+                    else:
+                        current_torque += r*g*bone.mass
+                    
+            gravity_torques.append(current_torque)
+            add_subsequent_bones = False
+            
+        return gravity_torques
+        
     # update moment of inertia at each joint
     def calc_I(self):
         
@@ -171,7 +220,7 @@ class Skeleton:
                     add_subsequent_bones = True
                 elif add_subsequent_bones == True:
                     bone_dist = dist(bone.CoM, joint.location)
-                    I_bone = bone.I_CoM + bone.mass*(bone_dist)**2
+                    I_bone = bone.I_CoM + bone.mass*(bone_dist**2)
                     I += I_bone
             joint.I = I
             add_subsequent_bones = False
@@ -239,11 +288,11 @@ class Skeleton:
             # calculate and write joint angle
             joint.angle = math.acos(cos_alpha)
             
-    """
-    this doesn't take into account joint rotation direction, but it absolutely
-    should, the values it's producing may not be correct
-    """
-    
+        """
+        Somehow this seems to just work despite not taking into account joint
+        rotation direction, may still want to look into in future
+        """
+            
     # calculate and set bone endpoints using joint angles, also updates joint
     # locations due to calling of realign_bones()       
     def calc_bone_endpoints(self):

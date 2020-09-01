@@ -5,13 +5,16 @@ actions that require crosstalk between skeletal and muscular information
 @author: Jack Vincent
 """
 
+import matplotlib.animation as animation
 from matplotlib.animation import FuncAnimation
 from matplotlib.collections import LineCollection, PatchCollection
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
+import numpy as np
 import pickle
 
 from bones import Bone, Joint, Skeleton
+from muscles import Muscle, Musculature
 
 # writes and dumps a fresh model in the working directory
 def init_model(name):
@@ -143,7 +146,7 @@ class Model:
     # animate data described by joint angles over time; first create frame 1 
     # and its associated line and circle collections, then use an animation 
     # function with FuncAnimation to create all subsequent frames
-    def animate(self, experiment):
+    def animate(self, experiment, save=False):
         
         # sampling frequency
         interval = 1/experiment.f_s
@@ -251,6 +254,12 @@ class Model:
         anim = FuncAnimation(fig, func, frames=len(joint_angles), 
                              interval=interval)
         
+        if save == True:
+            # Set up formatting for the movie files
+            Writer = animation.writers['ffmpeg']
+            writer = Writer(fps=60, metadata=dict(artist='Me'), bitrate=2000)
+            anim.save('test.mp4', writer=writer)
+        
         return anim
        
     # necessary to be able to pickle this object
@@ -342,7 +351,105 @@ class Experiment:
     # necessary to be able to pickle this object
     def __getstate__(self): return self.__dict__
     def __setstate__(self, d): self.__dict__.update(d)
-    
+
+class Simulation:
+
+    def __init__(self, name, model, f_s, duration):
+        
+        self.name = name
+        self.model = model
+        self.f_s = f_s
+        self.T = 1/f_s
+        self.joints = []
+        self.t = np.linspace(0, duration, int(duration/self.T))
+        self.t = list(self.t)
+        self.t = [round(elem, 2) for elem in self.t]
+        self.duration = duration
+        
+        for joint in self.model.skeleton.joints:
+            self.joints.append(JointData(joint.name))
+            
+        for i, joint_data in enumerate(self.joints):
+            ang = self.model.skeleton.joints[i].angle
+            joint_data.angle = [ang, ang]
+            joint_data.velocity = [0, 0]
+            joint_data.acceleration = [0, 0]
+            joint_data.torque = [0, 0]
+            
+    def plot(self, data):
+        if data == 'angle':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('Angle (rad)')
+            ax.set_title(self.name + ' Joint Angles')
+            
+            labels = []
+            for joint_data in self.joints:
+                plt.plot(self.t, joint_data.angle)
+                labels.append(joint_data.name)
+                
+            ax.legend(labels)
+            
+        elif data == 'velocity':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('v (rad/s)')
+            ax.set_title(self.name + ' Joint Velocities')
+            
+            labels = []
+            for joint_data in self.joints:
+                plt.plot(self.t, joint_data.velocity)
+                labels.append(joint_data.name)
+                
+            ax.legend(labels)
+            
+        elif data == 'acceleration':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('a (rad/s^2)')
+            ax.set_title(self.name + ' Joint Accelerations')
+            
+            labels = []
+            for joint_data in self.joints:
+                plt.plot(self.t, joint_data.acceleration)
+                labels.append(joint_data.name)
+                
+            ax.legend(labels)
+            
+        elif data == 'torque':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('tau (N * m)')
+            ax.set_title(self.name + ' Joint Torques')
+            
+            labels = []
+            for joint_data in self.joints:
+                plt.plot(self.t, joint_data.torque)
+                labels.append(joint_data.name)
+                
+            ax.legend(labels)
+            
+    # store self in working directory using pickle
+    def dump(self):
+        with open(self.name, "wb") as fp:
+            pickle.dump(self, fp)
+              
+    # necessary to be able to pickle this object
+    def __getstate__(self): return self.__dict__
+    def __setstate__(self, d): self.__dict__.update(d)
+            
 # tracking data related to a single joint through an experiment
 class JointData:
     
@@ -353,4 +460,7 @@ class JointData:
         self.velocity = []
         self.acceleration = []
         self.torque = []
+        
+
+        
 

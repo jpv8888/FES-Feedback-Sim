@@ -2,13 +2,20 @@
 """
 Inverse Kinematics: calculates joint angles needed to produce input movement 
 of hand endpoint through time via multivariate function minimization 
-@author: Jack Vincent
+@author: Jack Vincent, Yassin Fahmy 
 """
 
 import math
 from scipy.optimize import Bounds, minimize
+from progressbar import ProgressBar, Percentage, Bar, ETA
 
 import model
+
+# %% constants
+
+# relative penalization factors for sources of error
+endpoint_pen = 100
+ang_dev_pen = 2
 
 # %% data preparation prior to generating poses
 
@@ -22,48 +29,49 @@ endpoints = current_experiment.endpoints
 IK_joint_angles = []
 
 # bounds on joint angles (dictated by anatomy), used by both initial_pose() 
-# and more_pose() 
+# and more_pose() (lb is lower bound and ub is upper bound)
 lb = []
 ub = []
 for joint in current_model.skeleton.joints:
     lb.append(math.radians(joint.min_ang))
     ub.append(math.radians(joint.max_ang))
-    
+
+# Bounds function in scipy    
 bounds = Bounds(lb, ub)
 
 # %% calculate the initial pose of the skeleton
 
-# initial guess is all joint angles set to their default values
+# initial guess is midpoint of joint range of motion
 x0 = []
 for joint in current_model.skeleton.joints:
-    x0.append(math.radians(joint.default))
+    x0.append((math.radians(joint.max_ang) - math.radians(joint.min_ang))/2) 
 
 # desired hand endpoint to solve for (the starting endpoint)
 hand_endpoint = endpoints[0]
 
 # stuff the function we're minimizing needs to have access to
-args = (current_model.skeleton, hand_endpoint)
+args = (current_model.skeleton, hand_endpoint, endpoint_pen, ang_dev_pen)
 
 # function to be minimized 
 def initial_pose(joint_angles, *args):
-    
+
     # write input joint angles and determine subsequent hand endpoint location
     current_model.skeleton.write_joint_angles(joint_angles)
     model_endpoint = current_model.skeleton.bones[-1].endpoint2.coords
-    
+
     # 2 sources of error: distance of calculated model endpoint from desired
     # endpoint and deviation of joint angles from their default values
     endpoint_error = math.sqrt(sum((px - qx) ** 2.0 for px, qx in zip(model_endpoint, hand_endpoint)))
     default_ang_dev = 0
     for i, joint_angle in enumerate(joint_angles):
         default_ang_dev += abs(joint_angle - math.radians(current_model.skeleton.joints[i].default))
-    
+
     # endpoint error is weighted much more heavily, as minimizing deviation 
     # from default joint angles is secondary to getting the endpoint correct
-    return 10*endpoint_error + default_ang_dev
+    return endpoint_pen*endpoint_error + ang_dev_pen*default_ang_dev
 
-# minimize function using trust regions subject to constraints
-res = minimize(initial_pose, x0, method='trust-constr', options={'verbose': 0},
+# minimize function using Sequential Least Squares Programming (SLSQP)
+res = minimize(initial_pose, x0, method='SLSQP', options={'verbose': 0, 'ftol': 1/10**10},
                bounds=bounds)
 
 # write solution to skeleton
@@ -72,39 +80,43 @@ for i, joint in enumerate(current_model.skeleton.joints):
 
 # record solution
 IK_joint_angles.append(current_model.skeleton.return_joint_angles())
-    
+
 # %% calculate all other poses
-    
+
 # function to be minimized 
 def more_pose(joint_angles, *args):
-    
+
     # write input joint angles and determine subsequent hand endpoint location
     current_model.skeleton.write_joint_angles(joint_angles)
     model_endpoint = current_model.skeleton.bones[-1].endpoint2.coords
-    
-    # 2 sources of error: distance of calculated model endpoint from desired
-    # endpoint and deviation of joint angles from their PREVIOUS values
+
+    # 1 source of error: distance of calculated model endpoint from desired
+    # endpoint
     endpoint_error = math.sqrt(sum((px - qx) ** 2.0 for px, qx in zip(model_endpoint, hand_endpoint)))
-    ang_dev = sum(abs(px - qx) for px, qx in zip(joint_angles, x0))
-    
-    # endpoint error is weighted much more heavily, as minimizing deviation 
-    # from previous joint angles is secondary to getting the endpoint correct
-    return 10*endpoint_error + ang_dev
+
+    # endpoint error, only source of error: initial guess is previous pose of 
+    # skeleton, so solver should automatically find solution with least angle
+    # deviation 
+    return endpoint_pen*endpoint_error
 
 # skip the first endpoint since we've already calculated the initial pose
 iter_endpoints = iter(endpoints)
 next(iter_endpoints)
 
+# widgets for the progress bar
+widgets = ['PROGRESS: ', Percentage(), ' ',
+              Bar(marker='-',left='[',right=']\n'),
+               ' ', ETA(),' \n ']
+
+# create a progress bar object
+pbar = ProgressBar(maxval=len(endpoints),widgets=widgets).start()
+
 # iterate through every endpoint (other than first one)
 for i, endpoint in enumerate(iter_endpoints):
     
-    print(i)
-    
-    """
-    this is a crude, temp way to track the IK solver's progress, a cleaner way
-    would be nice
-    """
-    
+    # update progress bar
+    pbar.update(i+1)
+
     # initial guess is current value of all joint angles
     x0 = []
     for joint in current_model.skeleton.joints:
@@ -112,23 +124,13 @@ for i, endpoint in enumerate(iter_endpoints):
 
     # current endpoint being solved for
     hand_endpoint = endpoint
-    
+
     # stuff the function we're minimizing needs to have access to
-    args = (current_model.skeleton, hand_endpoint, x0)
-    
+    args = (current_model.skeleton, hand_endpoint, x0, endpoint_pen)
+
     # minimize function using trust regions subject to constraints
-    res = minimize(more_pose, x0, method='trust-constr', 
-                   options={'verbose': 0}, bounds=bounds)
-    
-    """
-    constantly throws this warning:
-    UserWarning: delta_grad == 0.0. Check if the approximated function is 
-    linear. If the function is linear better results can be obtained by 
-    defining the Hessian as zero instead of using quasi-Newton approximations.
-    need to find a way to silence this, or fix whatever it's complaining about
-    initial_pose() has the same problem, but it's less conspicuous since it 
-    only runs once
-    """
+    res = minimize(more_pose, x0, method='SLSQP', 
+                   options={'verbose': 0, 'ftol': 1/10**10}, bounds=bounds)
 
     # write solution to skeleton
     for i, joint in enumerate(current_model.skeleton.joints):
@@ -137,21 +139,28 @@ for i, endpoint in enumerate(iter_endpoints):
     # record solution
     IK_joint_angles.append(current_model.skeleton.return_joint_angles())
     
-# write IK derived joint angles to experiment object
+# end progress bar    
+pbar.finish() 
+
+# create joint data objects for experiment
 joint_datas = []
 for joint in current_model.skeleton.joints:
     joint_datas.append(model.JointData(joint.name))
-    
+
 current_experiment.joints = joint_datas
 
+# write IK data to experiment
 for i, joint_data in enumerate(current_experiment.joints):
-    current_experiment.joints[i].angle = [x[i] for x in IK_joint_angles]
     
+    # isolate IK angle data for 1 joint
+    joint_angles = [x[i] for x in IK_joint_angles]
+        
+    # write joint angle data to experiment
+    joint_data.angle = joint_angles
+
 # examine the finished results
 anim = current_model.animate(current_experiment)
 
 # write finished results
 current_model.dump()
 current_experiment.dump()
-    
-

@@ -172,10 +172,10 @@ peak_velocities = reg.predict(np.array(reach_distances).reshape(-1, 1))
 # reach time as a constant
 
 # time each reach will take
-reach_time = 1.5
+reach_time = 2
 
 # maximum rest time between reaches
-max_rest_time = 1
+max_rest_time = 0.5
 
 # sampling frequency and period
 f_s = current_experiment.f_s
@@ -189,7 +189,7 @@ sig = []
 
 # populate sigmoid curve
 for time in t_reach:
-    sig.append(logistic.cdf(time, loc=reach_time/2, scale=0.1))
+    sig.append(logistic.cdf(time, loc=reach_time/2, scale=0.05))
 
 """
 scale stretches the sigmoid out if it is increased; in order to fully automate
@@ -200,8 +200,8 @@ but how exactly this should be done has not yet been determined
 # these values must be hard set because sigmoid curve asymptotes, however 
 # first value of any reach should be whatever the endpoint was previously
 # while at rest, and last value of any reach should be the new rest value
-sig[0] = 0
-sig[-1] = 1
+# sig[0] = 0
+# sig[-1] = 1
 
 # lists that will hold final time and endpoint values with their initial 
 # values already inserted 

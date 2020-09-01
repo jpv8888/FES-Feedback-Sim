@@ -15,15 +15,13 @@ current_experiment = model.load('8-17-20')
 
 for joint_data in current_experiment.joints:
     angle = joint_data.angle
+    
     velocity = np.diff(angle)
-    
     velocity = list(velocity)
-    
     velocity = [i/current_experiment.T for i in velocity]
     
     acceleration = np.diff(velocity)
     acceleration = list(acceleration)
-    
     acceleration = [i/current_experiment.T for i in acceleration]
     
     velocity.insert(0, None)
@@ -36,21 +34,22 @@ for joint_data in current_experiment.joints:
 for joint_data in current_experiment.joints:
     joint_data.torque = list(np.zeros(len(joint_data.acceleration)))
     
-iterexperiment = iter(list(range(len(current_experiment.t))))
+iterexperiment = iter(range(len(current_experiment.t)))
 next(iterexperiment)
 next(iterexperiment)
 
 for i in iterexperiment:
-    
+
     joint_angles = []
     for joint_data in current_experiment.joints:
         joint_angles.append(joint_data.angle[i])
         
     current_model.skeleton.write_joint_angles(joint_angles)
-    current_model.skeleton.calc_I()
+    gravity_torques = current_model.skeleton.calc_gravity()
     
+    current_model.skeleton.calc_I()
     for j, joint_data in enumerate(current_experiment.joints):
-        joint_data.torque[i] = current_model.skeleton.joints[j].I * joint_data.acceleration[i]
+        joint_data.torque[i] = (current_model.skeleton.joints[j].I * joint_data.acceleration[i]) - gravity_torques[j]
     
 for joint_data in current_experiment.joints:
     joint_data.torque[0:2] = [None, None]

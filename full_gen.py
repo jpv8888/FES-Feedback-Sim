@@ -10,7 +10,7 @@ import model
 # model and experiment parameters
 model_name = 'upper_arm_0'
 experiment_name = '8-17-20'
-f_s = 100
+f_s = 200
 
 # generate and save new model and experiment
 model.init_model(model_name)
