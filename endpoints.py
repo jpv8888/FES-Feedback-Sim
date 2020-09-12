@@ -9,7 +9,7 @@ from math import dist
 import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
-from scipy.stats import logistic
+from scipy.special import comb
 
 from descartes import PolygonPatch
 from shapely.geometry import Point, LineString
@@ -30,12 +30,12 @@ current_experiment = model.load('8-17-20')
 # this model is constructed in the sagittal plane but we still assume straight 
 # lines between reaching targets
 
+# desired total number of endpoints to generate
+num_endpoints = 5
+
 # space we will use to randomly try points
 xlims = current_model.skeleton.x_lim
 ylims = current_model.skeleton.y_lim
-
-# desired total number of endpoints to generate
-num_endpoints = 5
 
 # will hold final endpoint selections
 endpoints = []
@@ -172,36 +172,36 @@ peak_velocities = reg.predict(np.array(reach_distances).reshape(-1, 1))
 # reach time as a constant
 
 # time each reach will take
-reach_time = 2
+reach_time = 1
 
-# maximum rest time between reaches
-max_rest_time = 0.5
+# rest time between reaches
+rest_time = 1
 
 # sampling frequency and period
 f_s = current_experiment.f_s
 T = current_experiment.T
 
+# pythonic smoothstep function, shamelessly copied from Stack Overflow
+def smoothstep(x, x_min=0, x_max=reach_time, N=5):
+    x = np.clip((x - x_min) / (x_max - x_min), 0, 1)
+
+    result = 0
+    for n in range(0, N + 1):
+         result += comb(N + n, n) * comb(2 * N + 1, N - n) * (-x) ** n
+
+    result *= x ** (N + 1)
+
+    return result
+
 # time vector for reach
-t_reach = np.arange(0, reach_time + T, T)
+t_reach = np.arange(0, reach_time, T)
 
 # will hold values outlining generic sigmoid 
 sig = []
 
 # populate sigmoid curve
 for time in t_reach:
-    sig.append(logistic.cdf(time, loc=reach_time/2, scale=0.05))
-
-"""
-scale stretches the sigmoid out if it is increased; in order to fully automate
-this process, it should automatically be calculated based on the reach time, 
-but how exactly this should be done has not yet been determined
-"""
-
-# these values must be hard set because sigmoid curve asymptotes, however 
-# first value of any reach should be whatever the endpoint was previously
-# while at rest, and last value of any reach should be the new rest value
-# sig[0] = 0
-# sig[-1] = 1
+    sig.append(smoothstep(time))
 
 # lists that will hold final time and endpoint values with their initial 
 # values already inserted 
@@ -210,17 +210,20 @@ t.append(0)
 endpoints_final = []
 endpoints_final.append(endpoints[0])
 
+reach_starts = []
+
 # runs for as many iterations as there are endpoints - 1, i.e. doesn't run for
 # the last one because there is no subsequent reach
 for i in range(len(endpoints) - 1):
     
-    # generate and populate rest period of random length, round t values or 
-    # error will start to accumulate 
-    rest_time = np.random.uniform(0, max_rest_time)
+    # generate and populate rest period, round t values or error will start to 
+    # accumulate 
     last_end_time = t[-1]
     while t[-1] < last_end_time + rest_time:
         t.append(round(t[-1] + T, 3))
         endpoints_final.append(endpoints_final[-1])
+        
+    reach_starts.append(t[-1])
         
     # the change that will take place in the x and y coordinates over the 
     # course of the reach
@@ -236,16 +239,20 @@ for i in range(len(endpoints) - 1):
         t.append(round(t[-1] + T, 3))
         endpoints_final.append((scale*x_transform + old_x, scale*y_transform + old_y))
     
-# append one last random rest period
-rest_time = np.random.uniform(0, max_rest_time)
+# append one last rest period
 last_end_time = t[-1]
 while t[-1] < last_end_time + rest_time:
     t.append(round(t[-1] + T, 3))
     endpoints_final.append(endpoints_final[-1])
 
-# write generated time and hand endpoint position data
+# write generated time and hand endpoint position data and other data related 
+# constants needed later
 current_experiment.t = t
 current_experiment.endpoints = endpoints_final
+current_experiment.rest_time = rest_time
+current_experiment.reach_duration = reach_time
+current_experiment.reach_times = reach_starts
 
+# write finished results
 current_model.dump()
 current_experiment.dump()

@@ -415,13 +415,3 @@ class Skeleton:
         
         self.calc_bone_endpoints()
         
-    # update CoM and moments of inertia for each bone      
-    def recalc(self):
-    
-        for bone in self.bones:
-            bone.calc_CoM()
-           
-
-    """
-    no use at the moment
-    """

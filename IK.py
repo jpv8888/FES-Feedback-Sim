@@ -8,8 +8,10 @@ of hand endpoint through time via multivariate function minimization
 import math
 from scipy.optimize import Bounds, minimize
 from progressbar import ProgressBar, Percentage, Bar, ETA
+from scipy.signal import butter, filtfilt
 
 import model
+
 
 # %% constants
 
@@ -149,14 +151,34 @@ for joint in current_model.skeleton.joints:
 
 current_experiment.joints = joint_datas
 
+# Filter requirements.
+fs = current_experiment.f_s      # sample rate, Hz
+cutoff = 6      # desired cutoff frequency of the filter, Hz
+nyq = 0.5 * fs  # Nyquist Frequency
+order = 2       # sin wave can be approx represented as quadratic
+n = len(current_experiment.t) # total number of samples
+
+def butter_lowpass_filter(data, cutoff, fs, order):
+    normal_cutoff = cutoff / nyq
+    # Get the filter coefficients 
+    b, a = butter(order, normal_cutoff, btype='low', analog=False)
+    y = filtfilt(b, a, data)
+    return y
+
 # write IK data to experiment
 for i, joint_data in enumerate(current_experiment.joints):
     
     # isolate IK angle data for 1 joint
     joint_angles = [x[i] for x in IK_joint_angles]
+    
+    # fix bug caused by switching between initial_pose() and more_pose()
+    if joint_angles[1] != joint_angles[0]:
+        joint_angles[0] = joint_angles[1]
+    
+    y = butter_lowpass_filter(joint_angles, cutoff, fs, order)
         
     # write joint angle data to experiment
-    joint_data.angle = joint_angles
+    joint_data.angle = y
 
 # examine the finished results
 anim = current_model.animate(current_experiment)

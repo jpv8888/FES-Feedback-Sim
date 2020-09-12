@@ -12,6 +12,7 @@ import matplotlib.patches as patches
 import matplotlib.pyplot as plt
 import numpy as np
 import pickle
+from scipy.misc import derivative
 
 from bones import Bone, Joint, Skeleton
 from muscles import Muscle, Musculature
@@ -66,11 +67,11 @@ def init_model(name):
         pickle.dump(Model(name, skeleton), fp)
         
 # writes and dumps a fresh experiment in the working directory
-def init_experiment(name, f_s):
+def init_experiment(name, f_s, associated_model):
     
     # dump experiment
     with open(name, "wb") as fp:
-        pickle.dump(Experiment(name, f_s), fp)
+        pickle.dump(Experiment(name, f_s, associated_model), fp)
         
 # load in a model or experiment from the working directory
 def load(name):
@@ -146,17 +147,23 @@ class Model:
     # animate data described by joint angles over time; first create frame 1 
     # and its associated line and circle collections, then use an animation 
     # function with FuncAnimation to create all subsequent frames
-    def animate(self, experiment, save=False):
+    def animate(self, data, save=False):
         
-        # sampling frequency
-        interval = 1/experiment.f_s
+        # finished video fps
+        video_fps = 60
         
         # data formatting
         joint_angles_pre_zip = []
-        for joint_data in experiment.joints:
+        for joint_data in data.joints:
             joint_angles_pre_zip.append(joint_data.angle)
             
         joint_angles = [list(a) for a in zip(*joint_angles_pre_zip)]
+        
+        # constants for converting data fps to video fps
+        data_fps = data.f_s
+        num_data_frames = len(joint_angles)
+        vid_length = num_data_frames/data_fps
+        num_video_frames = round(vid_length*video_fps)
         
         # initialize figure
         fig, ax = plt.subplots()
@@ -210,13 +217,16 @@ class Model:
         ax.add_collection(circles_collection)
         
         # other stuff that needs to be passed to our animation function
-        fargs = self, joint_angles
+        fargs = self, joint_angles, num_data_frames, num_video_frames
         
         # function that will be called for each frame of animation
         def func(frame, *fargs):
             
+            # convert video frame number to data frame number
+            data_frame = round((frame/num_video_frames)*num_data_frames)
+            
             # set skeleton
-            self.skeleton.write_joint_angles(joint_angles[frame])
+            self.skeleton.write_joint_angles(joint_angles[data_frame])
             
             # will hold all bones to be plotted as line segments
             segs = []
@@ -230,7 +240,6 @@ class Model:
             for bone in self.skeleton.bones:
                 segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
                 
-           
             # will hold all joints and hand to be plotted as circles
             circles = []
             
@@ -251,14 +260,15 @@ class Model:
             circles_collection.set_paths(circles)
             
         # animate each frame using animation function
-        anim = FuncAnimation(fig, func, frames=len(joint_angles), 
-                             interval=interval)
+        anim = FuncAnimation(fig, func, frames=num_video_frames, 
+                             interval=1/video_fps)
         
+        # save the animation as a video
         if save == True:
             # Set up formatting for the movie files
             Writer = animation.writers['ffmpeg']
-            writer = Writer(fps=60, metadata=dict(artist='Me'), bitrate=2000)
-            anim.save('test.mp4', writer=writer)
+            writer = Writer(fps=video_fps, metadata=dict(artist='Me'), bitrate=3000)
+            anim.save(self.name + '.mp4', writer=writer)
         
         return anim
        
@@ -269,14 +279,34 @@ class Model:
 # experiment object, keeps track of data through various processing scripts
 class Experiment:
     
-    def __init__(self, name, f_s):
+    def __init__(self, name, f_s, associated_model):
         
         self.f_s = f_s
         self.T = 1/f_s
         self.name = name
+        self.associated_model = associated_model
         self.t = []
+        self.reach_times = []
+        self.rest_time = []
+        self.reach_duration = []
         self.endpoints = []
         self.joints = []
+        
+    # returns torques needed at each joint to produce joint angles calculated 
+    # by IK at a given time t, TAKING GRAVITY INTO ACCOUNT
+    def return_torques(self, t):
+        joint_angles = []
+        for joint in self.joints:
+            joint_angles.append(joint.angle_interp(t))
+        self.associated_model.skeleton.write_joint_angles(joint_angles)
+        self.associated_model.skeleton.calc_I()
+        tau_gravity = self.associated_model.skeleton.calc_gravity()
+        torques = []
+        for i, joint in enumerate(self.joints):
+            acceleration = derivative(joint.angle_interp, t, dx=1e-6, n=2)
+            torque = acceleration * self.associated_model.skeleton.joints[i].I
+            torques.append(torque)
+        return [a_i - b_i for a_i, b_i in zip(torques, tau_gravity)]
         
     # store self in working directory using pickle
     def dump(self):
@@ -354,27 +384,17 @@ class Experiment:
 
 class Simulation:
 
-    def __init__(self, name, model, f_s, duration):
+    def __init__(self, name, model, f_s):
         
         self.name = name
         self.model = model
         self.f_s = f_s
         self.T = 1/f_s
         self.joints = []
-        self.t = np.linspace(0, duration, int(duration/self.T))
-        self.t = list(self.t)
-        self.t = [round(elem, 2) for elem in self.t]
-        self.duration = duration
+        self.t = [0]
         
         for joint in self.model.skeleton.joints:
             self.joints.append(JointData(joint.name))
-            
-        for i, joint_data in enumerate(self.joints):
-            ang = self.model.skeleton.joints[i].angle
-            joint_data.angle = [ang, ang]
-            joint_data.velocity = [0, 0]
-            joint_data.acceleration = [0, 0]
-            joint_data.torque = [0, 0]
             
     def plot(self, data):
         if data == 'angle':
@@ -460,6 +480,7 @@ class JointData:
         self.velocity = []
         self.acceleration = []
         self.torque = []
+        self.angle_interp = None
         
 
         
