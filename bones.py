@@ -58,7 +58,8 @@ class Bone:
 # second of two chief components making up a skeleton      
 class Joint:
     
-    def __init__(self, name, bone1, bone2, min_ang, max_ang, default, rotation):
+    def __init__(self, name, bone1, bone2, min_ang, max_ang, default, 
+                 rotation, diameter):
         self.name = name
         
         # bone1 is always bone closest toward body
@@ -82,6 +83,10 @@ class Joint:
         # (ccw) relative to bone1; ccw movement, velocity, torque etc. is 
         # positive while cw is negative
         self.rotation = rotation
+        
+        # joint diameter for visualization as well as muscle torque 
+        # calculation purposes
+        self.diameter = diameter
         
     # bone endpoints need to be set before can be calculated
     location = [0, 0]

@@ -55,16 +55,21 @@ def init_model(name):
                                  [0, -humerus.length-radioulna.length])}
     
     # generate joints
-    shoulder = Joint('shoulder', 'scapula', 'humerus', 60, 210, 90, 'cw')
-    elbow = Joint('elbow', 'humerus', 'radioulna', 30, 180, 180, 'ccw')
+    shoulder = Joint('shoulder', 'scapula', 'humerus', 60, 210, 90, 'cw', 0.02)
+    elbow = Joint('elbow', 'humerus', 'radioulna', 30, 180, 180, 'ccw', 0.02)
     
     # generate fresh, completed skeleton
     skeleton = Skeleton([scapula, humerus, radioulna], [shoulder, elbow], 
                         endpoints_0)
     
+    ant_delt = Muscle('anterior_deltoid', 500, 'shoulder', 'cw', 0.1, 
+                      'scapula', 'humerus', 0.5, 0.5, wraps=True)
+    
+    musculature = Musculature([ant_delt])
+    
     # dump model
     with open(name, "wb") as fp:
-        pickle.dump(Model(name, skeleton), fp)
+        pickle.dump(Model(name, skeleton, musculature), fp)
         
 # writes and dumps a fresh experiment in the working directory
 def init_experiment(name, f_s, associated_model):
@@ -83,10 +88,11 @@ def load(name):
 # model object composed of skeleton and musculature 
 class Model:
     
-    def __init__(self, name, skeleton):
+    def __init__(self, name, skeleton, musculature):
         
         self.name = name
         self.skeleton = skeleton
+        self.musculature = musculature
     
     # store self in working directory using pickle
     def dump(self):
@@ -116,7 +122,7 @@ class Model:
         # add circles representing each joint
         for joint in self.skeleton.joints:
             circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                    0.01, fill=True)
+                                    joint.diameter/2, fill=True)
             circles.append(circle)
             
         # add circle representing hand
@@ -201,7 +207,7 @@ class Model:
         # add circles representing each joint
         for joint in self.skeleton.joints:
             circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                    0.01, fill=True)
+                                    joint.diameter/2, fill=True)
             circles.append(circle)
             
         # add circle representing hand
@@ -246,7 +252,7 @@ class Model:
             # add circles representing each joint
             for joint in self.skeleton.joints:
                 circle = patches.Circle((joint.location[0], joint.location[1]), 
-                                        0.01, fill=True)
+                                        joint.diameter/2, fill=True)
                 circles.append(circle)
                 
             # add circle representing hand
@@ -271,6 +277,34 @@ class Model:
             anim.save(self.name + '.mp4', writer=writer)
         
         return anim
+    
+    def update_muscle_endpoints(self):
+        for muscle in self.musculature.muscles:
+            
+            for bone in self.skeleton.bones:
+                if bone.name == muscle.bone1:
+                    bone1 = bone
+                elif bone.name == muscle.bone2:
+                    bone2 = bone
+              
+            # can also be thought of as vector form of bone
+            x_transform = bone1.endpoint2.coords[0] - bone1.endpoint1.coords[0]
+            y_transform = bone1.endpoint2.coords[1] - bone1.endpoint1.coords[1]
+            
+            x = bone1.endpoint1.coords[0] + (muscle.origin * x_transform)
+            y = bone1.endpoint1.coords[1] + (muscle.origin * y_transform)
+            
+            muscle.endpoint1 = [x, y]
+            
+            # can also be thought of as vector form of bone
+            x_transform = bone2.endpoint2.coords[0] - bone2.endpoint1.coords[0]
+            y_transform = bone2.endpoint2.coords[1] - bone2.endpoint1.coords[1]
+            
+            x = bone2.endpoint1.coords[0] + (muscle.insertion * x_transform)
+            y = bone2.endpoint1.coords[1] + (muscle.insertion * y_transform)
+            
+            muscle.endpoint2 = [x, y]
+            
        
     # necessary to be able to pickle this object
     def __getstate__(self): return self.__dict__
