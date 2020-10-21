@@ -31,7 +31,7 @@ current_experiment = model.load('8-17-20')
 # lines between reaching targets
 
 # desired total number of endpoints to generate
-num_endpoints = 3
+num_endpoints = 5
 
 # space we will use to randomly try points
 xlims = current_model.skeleton.x_lim
@@ -172,7 +172,7 @@ peak_velocities = reg.predict(np.array(reach_distances).reshape(-1, 1))
 # reach time as a constant
 
 # time each reach will take
-reach_time = 1
+reach_time = 2
 
 # rest time between reaches
 rest_time = 1

@@ -4,6 +4,7 @@ Classes and functions for generating a completed model and coordinating
 actions that require crosstalk between skeletal and muscular information
 @author: Jack Vincent
 """
+from autograd import grad
 
 import matplotlib.animation as animation
 from matplotlib.animation import FuncAnimation
@@ -13,6 +14,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pickle
 from scipy.misc import derivative
+from scipy.interpolate import UnivariateSpline
 
 from bones import Bone, Joint, Skeleton
 from muscles import Muscle, Musculature
@@ -62,10 +64,22 @@ def init_model(name):
     skeleton = Skeleton([scapula, humerus, radioulna], [shoulder, elbow], 
                         endpoints_0)
     
-    ant_delt = Muscle('anterior_deltoid', 500, 'shoulder', 'cw', 0.1, 
-                      'scapula', 'humerus', 0.5, 0.5, wraps=True)
-    
-    musculature = Musculature([ant_delt])
+    ant_delt = Muscle('anterior_deltoid', 1200, 'shoulder', 'cw', 0.19, 
+                      'scapula', 'humerus', 0.7, 0.4, wraps=True, 
+                      wrap_transform=(-0.015, 0.015))
+    lat_dorsi = Muscle('latissimus_dorsi', 400, 'shoulder', 'ccw', 0.11, 
+                       'scapula', 'humerus', 0.1, 0.2, wraps=True, 
+                       wrap_transform=(0.015, -0.015))
+    biceps = Muscle('biceps', 400, 'elbow', 'cw', 0.34, 'humerus', 'radioulna', 
+                    0.1, 0.2)
+    triceps = Muscle('triceps', 300, 'elbow', 'ccw', 0.32, 'humerus', 
+                     'radioulna', 0.1, 0.1, wraps=True, 
+                     wrap_transform=(0.005, -0.015))
+    brachiorad = Muscle('brachioradialis', 200, 'elbow', 'cw', 0.28, 'humerus', 
+                        'radioulna', 0.8, 0.8)
+     
+    musculature = Musculature([ant_delt, lat_dorsi, biceps, triceps, 
+                               brachiorad], skeleton)
     
     # dump model
     with open(name, "wb") as fp:
@@ -114,7 +128,21 @@ class Model:
         for bone in self.skeleton.bones:
             segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
             
-        line_segments = LineCollection(segs)
+        line_segments = LineCollection(segs, linewidth=2, zorder=2)
+        
+        muscle_segs = []
+        
+        # add all muscles to a collection of segments to be plotted
+        for muscle in self.musculature.muscles:
+            if muscle.wraps == True:
+                muscle_segs.append((tuple(muscle.endpoint1), 
+                                    tuple(muscle.wrap_point), 
+                                    tuple(muscle.endpoint2)))
+            else:
+                muscle_segs.append((tuple(muscle.endpoint1), 
+                                    tuple(muscle.endpoint2)))
+                
+        muscle_lines = LineCollection(muscle_segs, color='r', zorder=1)
         
         # will hold all joints and hand to be plotted as circles
         circles = []
@@ -127,11 +155,11 @@ class Model:
             
         # add circle representing hand
         circle = patches.Circle((self.skeleton.bones[-1].endpoint2.coords[0], 
-                                 self.skeleton.bones[-1].endpoint2.coords[1]), 0.015, 
-                                fill=True)
+                                 self.skeleton.bones[-1].endpoint2.coords[1]), 
+                                0.015, fill=True)
         circles.append(circle)
         
-        circles_collection = PatchCollection(circles)
+        circles_collection = PatchCollection(circles, color='k', zorder=3)
             
         # initialize figure
         fig, ax = plt.subplots()
@@ -148,6 +176,7 @@ class Model:
         
         # add all visualization elements
         ax.add_collection(line_segments)
+        ax.add_collection(muscle_lines)
         ax.add_collection(circles_collection)
         
     # animate data described by joint angles over time; first create frame 1 
@@ -180,12 +209,13 @@ class Model:
         # formatting
         ax.set_xlabel('x')
         ax.set_ylabel('y')
-        ax.set_title('Animated Skeleton')
+        ax.set_title('Animated Model')
         ax.set_xlim(self.skeleton.x_lim[0], self.skeleton.x_lim[1])
         ax.set_ylim(self.skeleton.y_lim[0], self.skeleton.y_lim[1])
         
         # set skeleton for first frame
         self.skeleton.write_joint_angles(joint_angles[0])
+        self.musculature.update_muscle_endpoints()
         
         # will hold all bones to be plotted as line segments
         segs = []
@@ -199,7 +229,21 @@ class Model:
         for bone in self.skeleton.bones:
             segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
             
-        line_segments = LineCollection(segs)
+        line_segments = LineCollection(segs, linewidth=2, zorder=2)
+        
+        muscle_segs = []
+        
+        # add all muscles to a collection of segments to be plotted
+        for muscle in self.musculature.muscles:
+            if muscle.wraps == True:
+                muscle_segs.append((tuple(muscle.endpoint1), 
+                                    tuple(muscle.wrap_point), 
+                                    tuple(muscle.endpoint2)))
+            else:
+                muscle_segs.append((tuple(muscle.endpoint1), 
+                                    tuple(muscle.endpoint2)))
+                
+        muscle_lines = LineCollection(muscle_segs, color='r', zorder=1)
         
         # will hold all joints and hand to be plotted as circles
         circles = []
@@ -216,10 +260,11 @@ class Model:
                                 0.015, fill=True)
         circles.append(circle)
         
-        circles_collection = PatchCollection(circles)
+        circles_collection = PatchCollection(circles, color='k', zorder=3)
         
         # add visualization elements for first frame
         ax.add_collection(line_segments)
+        ax.add_collection(muscle_lines)
         ax.add_collection(circles_collection)
         
         # other stuff that needs to be passed to our animation function
@@ -233,6 +278,7 @@ class Model:
             
             # set skeleton
             self.skeleton.write_joint_angles(joint_angles[data_frame])
+            self.musculature.update_muscle_endpoints()
             
             # will hold all bones to be plotted as line segments
             segs = []
@@ -245,6 +291,18 @@ class Model:
             # add all bones to the collection of segments to be plotted
             for bone in self.skeleton.bones:
                 segs.append((tuple(bone.endpoint1.coords), tuple(bone.endpoint2.coords)))
+                
+            muscle_segs = []
+        
+            # add all muscles to a collection of segments to be plotted
+            for muscle in self.musculature.muscles:
+                if muscle.wraps == True:
+                    muscle_segs.append((tuple(muscle.endpoint1), 
+                                        tuple(muscle.wrap_point), 
+                                        tuple(muscle.endpoint2)))
+                else:
+                    muscle_segs.append((tuple(muscle.endpoint1), 
+                                        tuple(muscle.endpoint2)))
                 
             # will hold all joints and hand to be plotted as circles
             circles = []
@@ -263,6 +321,7 @@ class Model:
             
             # update and plot line and circle collections
             line_segments.set_paths(segs)
+            muscle_lines.set_paths(muscle_segs)
             circles_collection.set_paths(circles)
             
         # animate each frame using animation function
@@ -278,34 +337,6 @@ class Model:
         
         return anim
     
-    def update_muscle_endpoints(self):
-        for muscle in self.musculature.muscles:
-            
-            for bone in self.skeleton.bones:
-                if bone.name == muscle.bone1:
-                    bone1 = bone
-                elif bone.name == muscle.bone2:
-                    bone2 = bone
-              
-            # can also be thought of as vector form of bone
-            x_transform = bone1.endpoint2.coords[0] - bone1.endpoint1.coords[0]
-            y_transform = bone1.endpoint2.coords[1] - bone1.endpoint1.coords[1]
-            
-            x = bone1.endpoint1.coords[0] + (muscle.origin * x_transform)
-            y = bone1.endpoint1.coords[1] + (muscle.origin * y_transform)
-            
-            muscle.endpoint1 = [x, y]
-            
-            # can also be thought of as vector form of bone
-            x_transform = bone2.endpoint2.coords[0] - bone2.endpoint1.coords[0]
-            y_transform = bone2.endpoint2.coords[1] - bone2.endpoint1.coords[1]
-            
-            x = bone2.endpoint1.coords[0] + (muscle.insertion * x_transform)
-            y = bone2.endpoint1.coords[1] + (muscle.insertion * y_transform)
-            
-            muscle.endpoint2 = [x, y]
-            
-       
     # necessary to be able to pickle this object
     def __getstate__(self): return self.__dict__
     def __setstate__(self, d): self.__dict__.update(d)
@@ -335,12 +366,26 @@ class Experiment:
         self.associated_model.skeleton.write_joint_angles(joint_angles)
         self.associated_model.skeleton.calc_I()
         tau_gravity = self.associated_model.skeleton.calc_gravity()
+        
         torques = []
+        
         for i, joint in enumerate(self.joints):
-            acceleration = derivative(joint.angle_interp, t, dx=1e-6, n=2)
+            acceleration = joint.angle_interp.derivative(n=2)(t)
             torque = acceleration * self.associated_model.skeleton.joints[i].I
             torques.append(torque)
+            
         return [a_i - b_i for a_i, b_i in zip(torques, tau_gravity)]
+    
+    def return_torques_no_grav(self, t):
+        
+        torques = []
+        
+        for i, joint in enumerate(self.joints):
+            acceleration = joint.angle_interp.derivative(n=2)(t)
+            torque = acceleration * self.associated_model.skeleton.joints[i].I
+            torques.append(torque)
+            
+        return torques
         
     # store self in working directory using pickle
     def dump(self):
@@ -503,6 +548,174 @@ class Simulation:
     # necessary to be able to pickle this object
     def __getstate__(self): return self.__dict__
     def __setstate__(self, d): self.__dict__.update(d)
+    
+class MuscleTracker:
+    
+    def __init__(self, name, muscles, experiment, associated_model):
+        self.name = name
+        self.muscles = muscles       
+        self.experiment = experiment
+        self.t = experiment.t
+        self.associated_model = associated_model
+        
+    def calc_muscle_lengths(self):
+        for i, t in enumerate(self.experiment.t):
+            
+            joint_angles = []
+            for joint_data in self.experiment.joints:
+                joint_angles.append(joint_data.angle[i])
+            
+            self.associated_model.skeleton.write_joint_angles(joint_angles)
+            self.associated_model.musculature.update_muscle_endpoints()
+            
+            for muscle_data in self.muscles:
+                for muscle in self.associated_model.musculature.muscles:
+                    if muscle.name == muscle_data.name:
+                        muscle_data.length.append(muscle.length)
+                        
+        for muscle_data in self.muscles:
+            muscle_data.length_interp = UnivariateSpline(self.t, muscle_data.length, s=0)
+                        
+    # returns torques needed at each joint to produce joint angles calculated 
+    # by IK at a given time t, TAKING GRAVITY INTO ACCOUNT, USING MUSCLES NOT
+    # IDEALIZED TORQUES
+    def return_torques(self, t):
+        
+        # joint_angles = []
+        # for joint in self.experiment.joints:
+        #     joint_angles.append(joint.angle_interp(t))
+            
+        # self.associated_model.skeleton.write_joint_angles(joint_angles)
+        # self.associated_model.skeleton.calc_I()
+        # tau_gravity = self.associated_model.skeleton.calc_gravity()
+        
+        joint_torques = []
+        for joint in self.associated_model.skeleton.joints:
+            
+            joint_torques.append([joint.name, joint.diameter, joint.rotation, 0])
+            
+        for muscle_data in self.muscles:
+            for joint_torque in joint_torques:
+                
+                if muscle_data.muscle.joint == joint_torque[0]:
+                    
+                    muscle_act = muscle_data.forward_act_interp(t)
+                    
+                    # identify current muscle's maximum isometric force and 
+                    # optimal fiber length
+                
+                    muscle_Fmax = muscle_data.muscle.F_max
+                    muscle_OFL = muscle_data.muscle.optimal_fiber_length
+                            
+                    l_m = muscle_data.length_interp(t)/muscle_OFL
+                    F_l = np.exp(((-1) * ((l_m - 1)**2))/0.45)
+                            
+                    # check if joint rotation and muscle rotation directions 
+                    # line up
+                    if muscle_data.muscle.rotation == joint_torque[2]:
+                        joint_torque[3] += muscle_act * muscle_Fmax * \
+                            (joint_torque[1]/2)* F_l
+                    else:
+                        joint_torque[3] += muscle_act * muscle_Fmax * \
+                            (joint_torque[1]/2) * F_l * (-1)
+
+        torques = [el[3] for el in joint_torques]
+        
+        # return [a_i - b_i for a_i, b_i in zip(torques, tau_gravity)]
+        return torques 
+               
+    def plot(self, data):
+        if data == 'length':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('l (m)')
+            ax.set_title(self.name + ' Muscle Lengths')
+            
+            labels = []
+            for muscle_data in self.muscles:
+                plt.plot(self.t, muscle_data.length)
+                labels.append(muscle_data.name)
+                
+            ax.legend(labels)
+            
+        elif data == 'activation':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('a')
+            ax.set_ylim(0, 1)
+            ax.set_title(self.name + ' Muscle Activations')
+            
+            labels = []
+            for muscle_data in self.muscles:
+                plt.plot(self.t, muscle_data.activation)
+                labels.append(muscle_data.name)
+                
+            ax.legend(labels)
+        
+        elif data == 'excitation':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('u')
+            ax.set_ylim(0, 1)
+            ax.set_title(self.name + ' Muscle Excitations')
+            
+            labels = []
+            for muscle_data in self.muscles:
+                plt.plot(self.t, muscle_data.excitation)
+                labels.append(muscle_data.name)
+                
+            ax.legend(labels)
+            
+        elif data == 'forward_act':
+            
+            # initialize figure
+            fig, ax = plt.subplots()
+            
+            ax.set_xlabel('t (s)')
+            ax.set_ylabel('a')
+            ax.set_ylim(0, 1)
+            ax.set_title(self.name + ' Forward Muscle Activations')
+            
+            labels = []
+            for muscle_data in self.muscles:
+                plt.plot(self.t, muscle_data.forward_act)
+                labels.append(muscle_data.name)
+                
+            ax.legend(labels)
+            
+    # store self in working directory using pickle
+    def dump(self):
+        with open(self.name, "wb") as fp:
+            pickle.dump(self, fp)
+              
+    # necessary to be able to pickle this object
+    def __getstate__(self): return self.__dict__
+    def __setstate__(self, d): self.__dict__.update(d)
+    
+class MuscleData:
+    def __init__(self, name, muscle):
+        
+        self.name = name
+        self.muscle = muscle
+        self.length = []
+        self.length_interp = None
+        self.activation = []
+        self.activation_interp = None
+        self.excitation = []
+        self.forward_excite = []
+        self.forward_excite_interp = None
+        self.forward_act = []
+        self.forward_act_interp = None
+
             
 # tracking data related to a single joint through an experiment
 class JointData:
@@ -514,7 +727,15 @@ class JointData:
         self.velocity = []
         self.acceleration = []
         self.torque = []
+        self.torque_no_grav = []
         self.angle_interp = None
+        
+class ExcitationData:
+    
+    def __init__(self, muscle_name, u):
+        self.muscle_name = muscle_name
+        self.u = u
+    
         
 
         

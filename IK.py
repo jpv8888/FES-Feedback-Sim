@@ -132,7 +132,7 @@ for i, endpoint in enumerate(iter_endpoints):
 
     # minimize function using trust regions subject to constraints
     res = minimize(more_pose, x0, method='SLSQP', 
-                   options={'verbose': 0, 'ftol': 1/10**10}, bounds=bounds)
+                   options={'verbose': 0, 'ftol': 1e-10}, bounds=bounds)
 
     # write solution to skeleton
     for i, joint in enumerate(current_model.skeleton.joints):
