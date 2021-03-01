@@ -19,6 +19,9 @@ import model
 endpoint_pen = 100
 ang_dev_pen = 2
 
+save_kinematic_data_separate = False
+kinematic_data_name = 'test_1'
+
 # %% data preparation prior to generating poses
 
 # load in model and experiment
@@ -179,9 +182,13 @@ for i, joint_data in enumerate(current_experiment.joints):
         
     # write joint angle data to experiment
     joint_data.angle = y
-
+        
 # examine the finished results
 anim = current_model.animate(current_experiment)
+
+if save_kinematic_data_separate == True:
+    kinematic_data = model.KinematicData(kinematic_data_name, current_experiment)
+    kinematic_data.dump()
 
 # write finished results
 current_model.dump()

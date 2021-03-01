@@ -24,7 +24,9 @@ class Endpoint:
 # first of two chief components making up a skeleton
 class Bone:
     
-    def __init__(self, name, length, mass, mutable1, mutable2):
+    def __init__(self, name, length, mass, mutable1, mutable2, 
+                 point_mass=(0, None)):
+        
         self.name = name
         
         # units are MKS
@@ -45,15 +47,37 @@ class Bone:
         # endpoint1 is always endpoint closest toward body
         self.endpoint1 = Endpoint([0, 0], mutable1)
         self.endpoint2 = Endpoint([0, 0], mutable2)
-    
+        
+        self.point_mass = point_mass
+        
+        if self.point_mass != 0:
+            if self.point_mass[1] == 'endpoint_1':
+                self.point_mass_loc = self.endpoint1.coords
+            elif self.point_mass[1] == 'endpoint_2':
+                self.point_mass_loc = self.endpoint2.coords
+                
+    def update_point_mass_loc(self):
+        if self.point_mass != 0:
+            if self.point_mass[1] == 'endpoint_1':
+                self.point_mass_loc = self.endpoint1.coords
+            elif self.point_mass[1] == 'endpoint_2':
+                self.point_mass_loc = self.endpoint2.coords
+
     # center of mass: bone endpoints need to be set before can be calculated
     CoM = [0, 0]
+    CoM_with_PM = [0, 0]
     
     # calculate the bone's center of mass using the locations of its endpoints
     def calc_CoM(self):
         x = self.endpoint1.coords[0] + (self.endpoint2.coords[0] - self.endpoint1.coords[0])/2
         y = self.endpoint1.coords[1] + (self.endpoint2.coords[1] - self.endpoint1.coords[1])/2
         self.CoM = [x, y]
+        
+        if self.point_mass[0] != 0:
+            self.CoM_with_PM[0] = (self.CoM[0]*self.mass + \
+                           self.point_mass_loc[0]*self.point_mass[0])/(self.mass + self.point_mass[0])
+            self.CoM_with_PM[1] = (self.CoM[1]*self.mass + \
+                           self.point_mass_loc[1]*self.point_mass[0])/(self.mass + self.point_mass[0])
         
 # second of two chief components making up a skeleton      
 class Joint:
@@ -116,6 +140,10 @@ class Skeleton:
                     
         # adjust joint angles accordingly
         self.calc_joint_angles()
+        
+    def update_point_masses(self):
+        for bone in self.bones:
+            bone.update_point_mass_loc()
     
     # runs on object instantiation, explores endpoint solution space and fits
     # alpha shape to boundaries
@@ -182,16 +210,21 @@ class Skeleton:
             for bone in self.bones:
                 if bone.name == joint.bone2:
                     
-                    # position vector from bone center of mass to joint
-                    r = joint.location[0] - bone.CoM[0]
+                    if bone.point_mass[0] != 0:
+                        r = joint.location[0] - bone.CoM_with_PM[0]
+                        mass = bone.mass + bone.point_mass[0]
+                    else:
+                        # position vector from bone center of mass to joint
+                        r = joint.location[0] - bone.CoM[0]
+                        mass = bone.mass
             
                     # direction of torque must be flipped for bones that 
                     # rotate clockwise (against convention)
                     if joint.rotation == 'cw':
-                        current_torque += -r*g*bone.mass
-                        
+                        r = joint.location[0] - bone.CoM_with_PM[0]
+                        mass = bone.mass + bone.point_mass[0]
                     else:
-                        current_torque += r*g*bone.mass
+                        current_torque += r*g*mass
                         
                     add_subsequent_bones = True
                     
@@ -199,14 +232,22 @@ class Skeleton:
                     
                     # position vector from bone center of mass to joint
                     r = joint.location[0] - bone.CoM[0]
+                    
+                    if bone.point_mass[0] != 0:
+                        r = joint.location[0] - bone.CoM_with_PM[0]
+                        mass = bone.mass + bone.point_mass[0]
+                    else:
+                        # position vector from bone center of mass to joint
+                        r = joint.location[0] - bone.CoM[0]
+                        mass = bone.mass
             
                     # direction of torque must be flipped for bones that 
                     # rotate clockwise (against convention)
                     if joint.rotation == 'cw':
-                        current_torque += -r*g*bone.mass
+                        current_torque += -r*g*mass
                         
                     else:
-                        current_torque += r*g*bone.mass
+                        current_torque += r*g*mass
                     
             gravity_torques.append(current_torque)
             add_subsequent_bones = False
@@ -219,18 +260,33 @@ class Skeleton:
         add_subsequent_bones = False
         for joint in self.joints:
             for bone in self.bones:
+                
                 bone.calc_CoM()
+                
                 if bone.name == joint.bone2:
-                    I = bone.I_joint
+                    if bone.point_mass[0] != 0:
+                        I = bone.I_joint
+                        point_mass_dist = dist(bone.point_mass_loc, joint.location)
+                        I += bone.point_mass[0]*(point_mass_dist**2)
+                    else:
+                        I = bone.I_joint
+            
                     add_subsequent_bones = True
+                    
                 elif add_subsequent_bones == True:
                     bone_dist = dist(bone.CoM, joint.location)
-                    I_bone = bone.I_CoM + bone.mass*(bone_dist**2)
-                    I += I_bone
+                    if bone.point_mass[0] != 0:
+                        I_bone = bone.I_CoM + bone.mass*(bone_dist**2)
+                        I += I_bone
+                        point_mass_dist = dist(bone.point_mass_loc, joint.location)
+                        I += bone.point_mass[0]*(point_mass_dist**2)
+                    else:
+                        I_bone = bone.I_CoM + bone.mass*(bone_dist**2)
+                        I += I_bone
+                        
             joint.I = I
             add_subsequent_bones = False
                 
-        
     # view hand endpoint solution space and associated alpha shape
     def plot_solution_space(self):
         
@@ -292,6 +348,8 @@ class Skeleton:
             
             # calculate and write joint angle
             joint.angle = math.acos(cos_alpha)
+            
+        self.update_point_masses()
             
         """
         Somehow this seems to just work despite not taking into account joint
@@ -364,6 +422,8 @@ class Skeleton:
                          # have been connected to the bone we just adjusted 
                          # are now in the wrong place
                          self.realign_bones()
+                         
+        self.update_point_masses()
                          
     # fix bones so that all endpoints line up, must be called after adjusting 
     # the location of any bone

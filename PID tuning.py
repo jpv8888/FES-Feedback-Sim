@@ -1,5 +1,12 @@
 # -*- coding: utf-8 -*-
 """
+Created on Mon Feb  8 08:31:14 2021
+
+@author: 17049
+"""
+
+# -*- coding: utf-8 -*-
+"""
 FD experimental
 
 @author: 17049
@@ -8,6 +15,8 @@ test2 = []
 
 import copy
 from math import radians
+from hyperopt import fmin, tpe, hp, STATUS_OK, Trials
+import hyperopt
 import numpy as np
 from scipy.integrate import solve_ivp
 from scipy.interpolate import UnivariateSpline
@@ -21,18 +30,18 @@ f_s = 1000
 drive = 'muscles'
 
 # 2 modes: 'only_reaches' and 'free_run', 'free_run_with_feedback'
-mode = 'free_run'
+mode = 'free_run_with_feedback'
 
 # 2 modes: 'from_ID' and 'from_ANN' (where muscle excitations come from)
 excite_mode = 'from_ID'
 
 # used only for 'free_run'
-duration = 7
+duration = 10
 
 # load in model and experiment
 current_model = model.load('upper_arm_0')
 current_experiment = model.load('8-17-20')
-current_muscle_tracker = model.load('test2')
+current_muscle_tracker = model.load('test')
 
 current_simulation = model.Simulation(sim_name, current_model, f_s)
 
@@ -172,13 +181,13 @@ def f2(t, x, current_model, current_experiment):
 # Tuning parameters: proportional, integral, and derivative gain
 Kp = 0.01
 Ki = 0.01
-Kd = 0.002
+Kd = 0.01
 
 # how many samples to forward integrate before updating the muscle activations
 # in other words, how often to provide feedback
 samples_before_update = 5
 
-def elbow_feedback(current_sample_idx, err, err_i, err_d):
+def elbow_feedback(current_sample_idx, err, err_i, err_d, Kp, Ki, Kd):
     elbow_flexor_indices = [5, 6]
     for idx in elbow_flexor_indices:
         acts_to_be_adjusted = current_muscle_tracker.muscles[idx].forward_act[current_sample_idx:]
@@ -199,7 +208,7 @@ def elbow_feedback(current_sample_idx, err, err_i, err_d):
         current_muscle_tracker.muscles[idx].forward_act.extend(adjusted_acts)
         current_muscle_tracker.muscles[idx].forward_act_interp = UnivariateSpline(t, current_muscle_tracker.muscles[idx].forward_act, s=0)
 
-def shoulder_feedback(current_sample_idx, err, err_i, err_d):
+def shoulder_feedback(current_sample_idx, err, err_i, err_d, Kp, Ki, Kd):
     shoulder_flexor_indices = [0]
     for idx in shoulder_flexor_indices:
         acts_to_be_adjusted = current_muscle_tracker.muscles[idx].forward_act[current_sample_idx:]
@@ -220,61 +229,61 @@ def shoulder_feedback(current_sample_idx, err, err_i, err_d):
         current_muscle_tracker.muscles[idx].forward_act.extend(adjusted_acts)
         current_muscle_tracker.muscles[idx].forward_act_interp = UnivariateSpline(t, current_muscle_tracker.muscles[idx].forward_act, s=0)
         
-if mode == 'only_reaches':
+
     
-    for reach_start in current_experiment.reach_times:
+
+    
+
+def objective(params):
+    Kp, Ki, Kd = params['Kp'], params['Ki'], params['Kd']
+    current_simulation = model.Simulation(sim_name, current_model, f_s)
+    current_muscle_tracker = model.load('test')
+    
+    # whether or not to manually set the model's initial joint angles, if false, 
+    # initial joint angles will be obtained from the loaded experiment
+    manual_init = False
+    
+    init_joint_angles = []
+    for joint_data in current_experiment.joints:
+        init_joint_angles.append(joint_data.angle[0])
         
-        # fill in time values for rest interval preceeding the reach that's 
-        # about to be calculated
-        current_simulation.t.extend(list(np.arange(current_simulation.t[-1], reach_start - 1/f_s, 1/f_s)))
+    manual_init_joint_angles = [1.5708, 3.1416]
+    
+    for i, joint_data in enumerate(current_simulation.joints):
+        if manual_init == True:
+            joint_data.angle.append(manual_init_joint_angles[i])
+        elif manual_init == False:
+            joint_data.angle.append(init_joint_angles[i])
+    
+    for muscle_data in current_muscle_tracker.muscles:
         
-        # writes the values of the joint angles throughout the rest period
-        rest_samples = current_experiment.rest_time * f_s
-        for j, joint_data in enumerate(current_simulation.joints):
-            joint_data.angle.extend([float(current_experiment.joints[j].angle_interp(reach_start))] * (rest_samples))
+        if excite_mode == 'from_ID':    
+            muscle_data.forward_excite = muscle_data.excitation
             
-        start_time = reach_start
-        tspan = np.arange(start_time, start_time + current_experiment.reach_duration, 1/f_s)
-        current_simulation.t.extend(list(tspan))
+        elif excite_mode == 'from_ANN':
+            # externally produced muscle excitations are written in another script
+            pass
         
-        # initial guesses
-        xinit = [current_simulation.joints[0].angle[-1], 0, current_simulation.joints[1].angle[-1], 0]
+    
+    t = current_muscle_tracker.t
+    tau = 0.01
+    for muscle_data in current_muscle_tracker.muscles:
         
-        sol = solve_ivp(f2, [tspan[0], tspan[-1]], xinit, t_eval=tspan, method='Radau', 
-                        args=(current_model, current_experiment), rtol=1e-4, atol=1e-10)
-        current_simulation.joints[0].angle.extend(list(sol.y[0]))
-        current_simulation.joints[1].angle.extend(list(sol.y[2]))
+        muscle_data.forward_excite_interp = UnivariateSpline(t, muscle_data.forward_excite, s=0)
         
-    # add in the final rest period
-    current_simulation.t.extend(list(np.arange(current_simulation.t[-1], current_experiment.t[-1], 1/f_s)))
-    rest_samples = current_experiment.rest_time * f_s
-    for j, joint_data in enumerate(current_simulation.joints):
-        joint_data.angle.extend([float(current_simulation.joints[j].angle[-1])] * rest_samples)
+        def act_derivative(time, act, tau, muscle_data):
+            u = muscle_data.forward_excite_interp(time)
+            dadt = (u - act)/tau
+            return dadt
         
-    del current_simulation.t[0]
+        tspan = t
+        xinit = [muscle_data.activation[0]]
+        sol = solve_ivp(act_derivative, [tspan[0], tspan[-1]], xinit, t_eval=tspan,
+                        args=(tau, muscle_data), rtol=1e-4)
+        
+        muscle_data.forward_act = list(sol.y[0])
+        muscle_data.forward_act_interp = UnivariateSpline(t, muscle_data.forward_act, s=0)
     
-    anim = current_model.animate(current_simulation, muscle_tracker=current_muscle_tracker)
-    
-elif mode == 'free_run':
-    
-    # starting at 0 can cause really long computation times; I believe because
-    # the model must extrapolate many times into negative time in order to 
-    # calculate the first few derivatives, so we start at the onset of the
-    # first reach
-    start_time = current_experiment.reach_times[0]
-    tspan = np.arange(start_time, start_time + duration, 1/f_s)
-    current_simulation.t.extend(list(tspan))
-    xinit = [current_simulation.joints[0].angle[0], 0, current_simulation.joints[1].angle[0], 0]
-    sol = solve_ivp(f2, [tspan[0], tspan[-1]], xinit, t_eval=tspan, method='BDF', 
-                args=(current_model, current_experiment), rtol=1e-4, atol=1e-10)
-    current_simulation.joints[0].angle.extend(list(sol.y[0]))
-    current_simulation.joints[1].angle.extend(list(sol.y[2]))
-    
-    anim = current_model.animate(current_simulation, muscle_tracker=current_muscle_tracker)
-    
-elif mode == 'free_run_with_feedback':
-    
-    MT_copy = copy.deepcopy(current_muscle_tracker)
     
     start_time = current_experiment.reach_times[0]
     tspan = np.arange(0, start_time, 1/f_s)
@@ -284,8 +293,6 @@ elif mode == 'free_run_with_feedback':
     rest_samples = current_experiment.rest_time * f_s
     for j, joint_data in enumerate(current_simulation.joints):
         joint_data.angle.extend([float(current_experiment.joints[j].angle_interp(start_time))] * (rest_samples))
-    
-    print(len(current_simulation.joints[0].angle))
     
     current_sample_idx = int(start_time * f_s)
     
@@ -298,7 +305,9 @@ elif mode == 'free_run_with_feedback':
     elbow_error_derivative = 0
     
     
+    total_joint_error = 0
     while current_sample_idx < (len(t) - 1):
+        
         start_time = t[current_sample_idx]
         tspan = np.linspace(start_time, t[current_sample_idx + samples_before_update], num=5)
         current_simulation.t.extend(list(tspan))
@@ -319,29 +328,52 @@ elif mode == 'free_run_with_feedback':
         current_sample_idx += samples_before_update
         print(current_sample_idx)
         
+        
         # shoulder feedback
         shoulder_error = current_experiment.joints[0].angle[current_sample_idx] - current_simulation.joints[0].angle[-1]
         shoulder_error_integral += shoulder_error
         shoulder_error_derivative = (shoulder_error - shoulder_previous_error)/feedback_period
-        shoulder_feedback(current_sample_idx, shoulder_error, shoulder_error_integral, shoulder_error_derivative)
+        shoulder_feedback(current_sample_idx, shoulder_error, 
+                          shoulder_error_integral, shoulder_error_derivative, 
+                          Kp, Ki, Kd)
             
         # elbow feedback
         elbow_error = current_experiment.joints[1].angle[current_sample_idx] - current_simulation.joints[1].angle[-1]
         elbow_error_integral += elbow_error
         elbow_error_derivative = (elbow_error - elbow_previous_error)/feedback_period
-        elbow_feedback(current_sample_idx, elbow_error, elbow_error_integral, elbow_error_derivative)
+        elbow_feedback(current_sample_idx, elbow_error, elbow_error_integral, 
+                       elbow_error_derivative, Kp, Ki, Kd)
         
         shoulder_previous_error = shoulder_error
         elbow_previous_error = elbow_error
         
         current_muscle_tracker.trim_acts()
         
-    
-    anim = current_model.animate(current_simulation, muscle_tracker=current_muscle_tracker)
-   
+
+        for j, joint_data in enumerate(current_experiment.joints):
+            total_joint_error += abs(joint_data.angle[current_sample_idx] - current_simulation.joints[j].angle[current_sample_idx])
             
+        if total_joint_error > 1000:
+            total_joint_error = 1000 + (len(t) - current_sample_idx)
+            break
         
     
+    return total_joint_error
+            
     
+space = {'Kp': hp.uniform('Kp', 0.68, 1.18),
+         'Ki': hp.uniform('Ki', 0.2, 1.2),
+         'Kd': hp.uniform('Kd', 0, 0.9)}
+
+trials = Trials()
+
+best = fmin(
+    fn=objective, # Objective Function to optimize
+    space=space, # Hyperparameter's Search Space
+    algo=tpe.suggest, # Optimization algorithm (representative TPE)
+    max_evals=100, # Number of optimization attempts
+    trials=trials
+)
+
     
-    
+        

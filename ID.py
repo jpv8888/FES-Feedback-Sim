@@ -17,6 +17,13 @@ import model
 current_model = model.load('upper_arm_0')
 current_experiment = model.load('8-17-20')
 
+load_alternate_kinematic_data = False
+kinematic_data_name = 'test_1'
+
+if load_alternate_kinematic_data == True:
+    kinematic_data = model.load(kinematic_data_name)
+    current_experiment.load_kinematic_data(kinematic_data)
+
 t = current_experiment.t
 
 # creates interpolation function that can be called to determine the joint 
@@ -25,6 +32,94 @@ t = current_experiment.t
 for joint_data in current_experiment.joints:
     angle = joint_data.angle
     joint_data.angle_interp = UnivariateSpline(t, angle, s=0)
+    
+# track forearm center of mass through movement
+forearm_CoM = []
+elbow_loc = []
+PG_vector = []
+for time in t:
+    
+    joint_angles = []
+    for joint_data in current_experiment.joints:
+        joint_angles.append(joint_data.angle_interp(time))
+        
+    current_model.skeleton.write_joint_angles(joint_angles)
+    current_model.skeleton.calc_I()
+    if current_model.skeleton.bones[-1].point_mass[0] != 0:
+        forearm_CoM.append(current_model.skeleton.bones[-1].CoM_with_PM)
+    else:
+        forearm_CoM.append(current_model.skeleton.bones[-1].CoM)
+    elbow_loc.append(current_model.skeleton.joints[-1].location)
+    
+    PG_x = forearm_CoM[-1][0] - elbow_loc[-1][0]
+    PG_y = forearm_CoM[-1][1] - elbow_loc[-1][1]
+    
+    PG_vector.append([PG_x, PG_y])
+    
+a_x_vec = []    
+a_y_vec = []
+for time in t:
+
+    x_vec = []
+    for joint_data in current_experiment.joints:
+        x_vec.append(joint_data.angle_interp(time))
+    current_model.skeleton.write_joint_angles(x_vec)
+    current_model.skeleton.calc_I()
+    
+    joint_data_shoulder = current_experiment.joints[0]
+    alpha_shoulder = joint_data_shoulder.angle_interp.derivative(n=2)(time)
+    omega_shoulder = joint_data_shoulder.angle_interp.derivative(n=1)(time)
+    l_humerus = current_model.skeleton.bones[1].length
+    alpha_tan_mag = abs(alpha_shoulder * l_humerus)
+    alpha_cen_mag = abs((omega_shoulder**2) * l_humerus)  
+    
+    # 180 degree rotation, centripetal acceleration vector runs from elbow 
+    # to shoulder
+    cen_vector = [i*-1 for i in current_model.skeleton.bones[2].endpoint1.coords]
+    cen_vector_mag = l_humerus
+    cen_vector_unit = [i/cen_vector_mag for i in cen_vector]
+    
+    tan_vector_unit = [0, 0]
+    if alpha_shoulder >= 0:
+        tan_vector_unit[0] = -1 * cen_vector_unit[1]
+        tan_vector_unit[1] = cen_vector_unit[0]
+    else:
+        tan_vector_unit[0] = cen_vector_unit[1]
+        tan_vector_unit[1] = -1 * cen_vector_unit[0]
+        
+    cen_vector_final = [i*alpha_cen_mag for i in cen_vector_unit]
+    tan_vector_final = [i*alpha_tan_mag for i in tan_vector_unit]
+    elbow_lin_accel = [x + y for x, y in zip(cen_vector_final, tan_vector_final)]
+    
+    a_x_vec.append(elbow_lin_accel[0])
+    a_y_vec.append(elbow_lin_accel[1])
+    
+current_experiment.forearm_CoM = forearm_CoM
+current_experiment.PG_vector = PG_vector
+current_experiment.elbow_loc = elbow_loc
+
+current_experiment.elbow_loc_interp_x = UnivariateSpline(t, [el[0] for el in elbow_loc], s=0)
+current_experiment.elbow_loc_interp_y = UnivariateSpline(t, [el[1] for el in elbow_loc], s=0)
+
+inertial_torque = []
+if current_model.skeleton.bones[-1].point_mass[0] != 0:
+    point_mass = current_model.skeleton.bones[-1].point_mass[0]
+    mass = current_model.skeleton.bones[-1].mass + point_mass
+else:
+    mass = current_model.skeleton.bones[-1].mass
+
+for i, time in enumerate(t):
+    a_x = a_x_vec[i]
+    a_y = a_y_vec[i]
+    PG_vec = current_experiment.PG_vector[i]
+    PG_vec_x = PG_vec[0]
+    PG_vec_y = PG_vec[1]
+    
+    # not 100% sure if this sign is correct
+    inertial_torque.append((PG_vec_x*mass*a_y) - (PG_vec_y*mass*a_x))
+    
+current_experiment.inertial_torque = inertial_torque
+current_experiment.inertial_torque_interp = UnivariateSpline(t, inertial_torque, s=0)
 
 # iterate joint by joint
 for joint_data in current_experiment.joints:
@@ -61,19 +156,24 @@ muscle_datas = []
 for muscle in current_model.musculature.muscles:
     muscle_datas.append(model.MuscleData(muscle.name, muscle))
     
-current_muscle_tracker = model.MuscleTracker('test', muscle_datas, 
+current_muscle_tracker = model.MuscleTracker('test2', muscle_datas, 
                                              current_experiment, current_model)
 current_muscle_tracker.calc_muscle_lengths()
-
+current_muscle_tracker.calc_muscle_moment_arms()
 
 # function to be minimized 
 def calc_muscle_act(muscle_acts, *args):
 
+    # will hold normalized muscle lengths
     lengths = []
+    
+    # moment arm of each muscle at each time point
+    moment_arms = []
     
     # scale activations by muscle lengths
     for j, muscle_data in enumerate(current_muscle_tracker.muscles):
         lengths.append(muscle_data.length_interp(time)/current_model.musculature.muscles[j].optimal_fiber_length)
+        moment_arms.append(muscle_data.moment_arm_interp(time))
     
     # adjust muscle activations by length factor
     adjusted_acts = []
@@ -84,24 +184,48 @@ def calc_muscle_act(muscle_acts, *args):
         adjusted_acts.append(post_length)
         
     # create dictionary with keys = muscle names and values = activation level 
-    # (adjusted for length)
+    # (adjusted for length) and passive muscle-tendon torque 
     muscle_activations = {}
+    K_T = 0.5
+    
     for j, act in enumerate(adjusted_acts):
-        muscle_activations[current_model.musculature.muscles[j].name] = adjusted_acts[j]
+        if lengths[j] < 1:
+            MT_passive = 0
+        else:
+            MT_passive = K_T * ((lengths[j] - 1)**2) * \
+                current_model.musculature.muscles[j].F_max * \
+                    moment_arms[j]
+        muscle_activations[current_model.musculature.muscles[j].name] = [adjusted_acts[j],
+                                                                         MT_passive,
+                                                                         moment_arms[j]]
         
     joint_torques = np.zeros(len(current_model.skeleton.joints))
     for j, joint in enumerate(current_model.skeleton.joints):
         current_joint = joint.name
         
         for muscle in current_model.musculature.muscles:
-            if muscle.joint == current_joint:
-                if muscle.rotation == joint.rotation:
-                    joint_torques[j] += muscle_activations[muscle.name] * \
-                        muscle.F_max * (joint.diameter/2)
-                else:
-                    joint_torques[j] += (-1) * \
-                        muscle_activations[muscle.name] * muscle.F_max * \
-                            (joint.diameter/2)
+            if muscle.biarticular == True:
+                for i, muscle_joint in enumerate(muscle.joint):
+                    if muscle_joint == current_joint:
+                        
+                        if muscle.rotation[i] == joint.rotation:
+                            joint_torques[j] += (muscle_activations[muscle.name][0] * \
+                            muscle.F_max * muscle_activations[muscle.name][2]) + muscle_activations[muscle.name][1]
+                        else:
+                            joint_torques[j] += ((-1) * \
+                                muscle_activations[muscle.name][0] * muscle.F_max * \
+                                    muscle_activations[muscle.name][2]) - muscle_activations[muscle.name][1]
+                    
+            else:
+                if muscle.joint == current_joint:
+                    
+                    if muscle.rotation == joint.rotation:
+                        joint_torques[j] += (muscle_activations[muscle.name][0] * \
+                            muscle.F_max * muscle_activations[muscle.name][2]) + muscle_activations[muscle.name][1]
+                    else:
+                        joint_torques[j] += ((-1) * \
+                            muscle_activations[muscle.name][0] * muscle.F_max * \
+                                muscle_activations[muscle.name][2]) - muscle_activations[muscle.name][1]
                             
     torque_error = math.sqrt(sum((px - qx) ** 2.0 for px, qx in zip(joint_torques, target_torques)))
     
@@ -111,7 +235,8 @@ def calc_muscle_act(muscle_acts, *args):
     
     deviation_error = math.sqrt(sum((px - qx) ** 2.0 for px, qx in zip(x0, muscle_acts)))
     
-    return (1000*torque_error) + act_error + (10*deviation_error)
+    # return (1000*torque_error) + act_error + (10*deviation_error)
+    return (1000*torque_error) + act_error
 
 # widgets for the progress bar
 widgets = ['PROGRESS: ', Percentage(), ' ',
@@ -152,8 +277,8 @@ for i, time in enumerate(current_experiment.t):
     # stuff the function we're minimizing needs to have access to
     args = (current_model, target_torques, current_muscle_tracker, i, time)
 
-    # minimize function using SLSQP
-    res = minimize(calc_muscle_act, x0, method='TNC', 
+    # minimize function using L-BFGS-B
+    res = minimize(calc_muscle_act, x0, method='L-BFGS-B', 
                    options={'verbose': 0, 'ftol': 1e-10}, bounds=bounds)
 
     for j, activ in enumerate(res.x):
